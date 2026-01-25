@@ -35,6 +35,7 @@ dependencies = [
 api = [
     "fastapi>=0.110.0",
     "uvicorn>=0.27.0",
+    "python-multipart>=0.0.6",
 ]
 ui = [
     "streamlit>=1.30.0",
@@ -49,6 +50,7 @@ dev = [
 orthon = "orthon.cli:main"
 orthon-explorer = "orthon.explorer.cli:main"
 orthon-config = "orthon.data_reader:main"
+orthon-serve = "orthon.api:main"
 
 [project.entry-points."orthon.domains"]
 turbofan = "orthon.config.domains:turbofan"
