@@ -10,6 +10,8 @@ __version__ = "0.1.0"
 
 # Core functionality
 from orthon.intake import load_file, validate, detect_columns, detect_units
+from orthon.intake import prepare_for_prism, transform_for_prism, IntakeTransformer
+from orthon.shared import PrismConfig, SignalInfo, DISCIPLINES
 from orthon.backend import get_backend, analyze, has_prism, get_backend_info
 from orthon.display import generate_report, to_json, to_csv
 
@@ -21,6 +23,14 @@ __all__ = [
     'validate',
     'detect_columns',
     'detect_units',
+    # Transformer
+    'prepare_for_prism',
+    'transform_for_prism',
+    'IntakeTransformer',
+    # Config Schema (shared with PRISM)
+    'PrismConfig',
+    'SignalInfo',
+    'DISCIPLINES',
     # Backend
     'get_backend',
     'analyze',

@@ -24,13 +24,14 @@ import polars as pl
 from orthon.data_reader import DataReader, DataProfile
 from orthon.config.recommender import ConfigRecommender
 from orthon.config.domains import (
-    DOMAINS,
+    DOMAINS as LEGACY_DOMAINS,
     EQUATION_INFO,
     get_required_inputs,
     get_equations_for_domain,
     validate_inputs,
     generate_config,
 )
+from orthon.shared import DISCIPLINES
 
 
 app = FastAPI(
@@ -197,27 +198,52 @@ async def get_capabilities():
     }
 
 
+# =============================================================================
+# DISCIPLINE ENDPOINTS (new architecture)
+# =============================================================================
+
+@app.get("/api/disciplines")
+async def get_disciplines():
+    """Return all discipline definitions for physics engine routing."""
+    return {"disciplines": DISCIPLINES}
+
+
+@app.get("/api/disciplines/{discipline}")
+async def get_discipline_info(discipline: str):
+    """Return info for a specific discipline including requirements and engines."""
+    if discipline not in DISCIPLINES:
+        raise HTTPException(status_code=404, detail=f"Discipline not found: {discipline}")
+    return {
+        "discipline": discipline,
+        "info": DISCIPLINES[discipline],
+    }
+
+
+# =============================================================================
+# LEGACY DOMAIN ENDPOINTS (for backwards compatibility)
+# =============================================================================
+
 @app.get("/api/domains")
 async def get_domains():
-    """Return all domain definitions for domain-specific wizards."""
-    return {"domains": DOMAINS}
+    """Return all domain definitions for domain-specific wizards. (Legacy)"""
+    return {"domains": LEGACY_DOMAINS}
 
 
 @app.get("/api/domains/{domain}")
 async def get_domain_equations(domain: str):
-    """Return equations and requirements for a specific domain."""
-    if domain not in DOMAINS:
+    """Return equations and requirements for a specific domain. (Legacy)"""
+    if domain not in LEGACY_DOMAINS:
         raise HTTPException(status_code=404, detail=f"Domain not found: {domain}")
     return {
-        "domain": DOMAINS[domain],
+        "domain": LEGACY_DOMAINS[domain],
         "equations": get_equations_for_domain(domain),
     }
 
 
 @app.post("/api/domains/{domain}/inputs")
 async def get_domain_inputs(domain: str, equations: list[str]):
-    """Return required inputs for selected equations."""
-    if domain not in DOMAINS:
+    """Return required inputs for selected equations. (Legacy)"""
+    if domain not in LEGACY_DOMAINS:
         raise HTTPException(status_code=404, detail=f"Domain not found: {domain}")
     return {
         "required_inputs": get_required_inputs(equations),
@@ -226,7 +252,7 @@ async def get_domain_inputs(domain: str, equations: list[str]):
 
 @app.post("/api/domains/{domain}/validate")
 async def validate_domain_inputs(domain: str, data: dict):
-    """Validate inputs for selected equations."""
+    """Validate inputs for selected equations. (Legacy)"""
     equations = data.get('equations', [])
     inputs = data.get('inputs', {})
     errors = validate_inputs(equations, inputs)
@@ -238,8 +264,8 @@ async def validate_domain_inputs(domain: str, data: dict):
 
 @app.post("/api/domains/{domain}/generate-config")
 async def generate_domain_config(domain: str, data: dict):
-    """Generate PRISM config from wizard inputs."""
-    if domain not in DOMAINS:
+    """Generate PRISM config from wizard inputs. (Legacy)"""
+    if domain not in LEGACY_DOMAINS:
         raise HTTPException(status_code=404, detail=f"Domain not found: {domain}")
 
     equations = data.get('equations', [])

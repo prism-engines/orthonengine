@@ -18,6 +18,7 @@ from orthon.intake import load_file, validate, detect_columns
 from orthon.backend import get_backend, analyze, get_backend_info
 from orthon.display import generate_report, to_json, to_csv
 from orthon.display.report import format_signals_table
+from orthon.shared import DISCIPLINES
 
 st.set_page_config(page_title="Orthon", page_icon="⚡", layout="wide")
 
@@ -147,12 +148,47 @@ with tab2:
             st.success(f"✅ `{uploaded.name}` — {len(df):,} rows × {len(df.columns)} columns")
             st.dataframe(df.head(10), use_container_width=True)
 
+            # Discipline selection (optional)
+            st.subheader("Analysis Options")
+            discipline_options = {"(Core Engines Only)": None}
+            for key, info in DISCIPLINES.items():
+                discipline_options[f"{info['icon']} {info['name']} — {info['description']}"] = key
+
+            selected_discipline_label = st.selectbox(
+                "Discipline (optional)",
+                options=list(discipline_options.keys()),
+                help="Select a discipline for specialized physics engines. Leave as Core for universal diagnostics."
+            )
+            selected_discipline = discipline_options[selected_discipline_label]
+
+            if selected_discipline:
+                discipline_info = DISCIPLINES[selected_discipline]
+                engine_count = discipline_info.get('engine_count', len(discipline_info['engines']))
+                st.caption(f"{engine_count} engines: {', '.join(discipline_info['engines'][:8])}{'...' if len(discipline_info['engines']) > 8 else ''}")
+
+                # Show requirements
+                has_requirements = False
+                if discipline_info.get('required_constants'):
+                    st.info(f"**Required constants:** {', '.join(discipline_info['required_constants'])}")
+                    has_requirements = True
+                if discipline_info.get('required_signals'):
+                    st.info(f"**Required signals:** {', '.join(discipline_info['required_signals'])}")
+                    has_requirements = True
+                if discipline_info.get('required_signals_any'):
+                    st.info(f"**Needs at least one of:** {', '.join(discipline_info['required_signals_any'])}")
+                    has_requirements = True
+                if discipline_info.get('optional_constants'):
+                    with st.expander("Optional constants (enable more engines)"):
+                        st.write(', '.join(discipline_info['optional_constants']))
+                if not has_requirements:
+                    st.success("No special requirements - works with any numeric data")
+
             if st.button("🔍 Analyze", type="primary"):
                 # Validate
                 validation = validate(df)
 
-                # Run backend analysis
-                analysis_results, backend_name = analyze(df)
+                # Run backend analysis with discipline
+                analysis_results, backend_name = analyze(df, discipline=selected_discipline)
 
                 # Generate report
                 report = generate_report(
@@ -164,6 +200,7 @@ with tab2:
                 st.session_state['report'] = report
                 st.session_state['validation'] = validation
                 st.session_state['analysis'] = analysis_results
+                st.session_state['discipline'] = selected_discipline
 
                 st.success(f"Done! (using {backend_name} backend) See Results tab →")
 
