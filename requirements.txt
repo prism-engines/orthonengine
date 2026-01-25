@@ -1,0 +1,47 @@
+# ORTHON Requirements
+# ===================
+# Pure interpreter. Zero calculations. Reads parquet, applies config, serves UI.
+
+# -----------------------------------------------------------------------------
+# CORE DEPENDENCY
+# -----------------------------------------------------------------------------
+# prism-engine @ git+https://github.com/prism-engines/prism.git  # TODO: not yet a Python package
+# Or after PyPI publish:
+# prism-engine>=1.0.0
+
+# -----------------------------------------------------------------------------
+# DATA READING (no computation libraries needed - PRISM handles that)
+# -----------------------------------------------------------------------------
+polars>=0.20.0              # Read parquet files (fast, no pandas bloat)
+duckdb>=0.10.0              # Per-domain queryable databases
+pyarrow>=14.0.0             # Parquet support for DuckDB
+
+# -----------------------------------------------------------------------------
+# CONFIGURATION
+# -----------------------------------------------------------------------------
+pydantic>=2.0.0             # Config validation (JSON schemas)
+tomli>=2.0.0                # TOML config support (Python <3.11)
+pyyaml>=6.0.0               # YAML config support (optional)
+
+# -----------------------------------------------------------------------------
+# EXPLORER / UI
+# -----------------------------------------------------------------------------
+# Option A: Minimal static file server
+# (DuckDB-WASM runs in browser, no backend needed)
+
+# Option B: If you want a Python backend
+fastapi>=0.110.0            # API for serving config/data
+uvicorn>=0.27.0             # ASGI server
+
+# -----------------------------------------------------------------------------
+# REPORTING / NARRATIVE
+# -----------------------------------------------------------------------------
+jinja2>=3.1.0               # Template engine for reports
+markdown>=3.5.0             # Markdown rendering for thesis output
+
+# -----------------------------------------------------------------------------
+# DEVELOPMENT
+# -----------------------------------------------------------------------------
+# pytest>=8.0.0
+# ruff>=0.2.0
+# mypy>=1.8.0
