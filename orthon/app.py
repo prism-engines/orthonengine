@@ -135,7 +135,7 @@ Currently available:
 with tab2:
     st.header("Upload Your Data")
 
-    uploaded = st.file_uploader("CSV, Parquet, or TSV", type=['csv', 'parquet', 'tsv', 'txt'])
+    uploaded = st.file_uploader("CSV, Excel, Parquet, or TSV", type=['csv', 'xlsx', 'xls', 'parquet', 'tsv', 'txt'])
 
     if uploaded:
         try:

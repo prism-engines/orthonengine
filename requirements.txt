@@ -15,6 +15,7 @@
 polars>=0.20.0              # Read parquet files (fast, no pandas bloat)
 duckdb>=0.10.0              # Per-domain queryable databases
 pyarrow>=14.0.0             # Parquet support for DuckDB
+openpyxl>=3.1.0             # Excel file support (.xlsx)
 
 # -----------------------------------------------------------------------------
 # CONFIGURATION

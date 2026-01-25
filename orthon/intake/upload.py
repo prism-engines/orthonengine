@@ -2,7 +2,7 @@
 ORTHON Upload Handler
 =====================
 
-Handle file uploads for CSV, Parquet, and TSV files.
+Handle file uploads for CSV, Parquet, TSV, and Excel files.
 """
 
 from pathlib import Path
@@ -16,6 +16,8 @@ SUPPORTED_FORMATS = {
     '.txt': 'tsv',
     '.parquet': 'parquet',
     '.pq': 'parquet',
+    '.xlsx': 'excel',
+    '.xls': 'excel',
 }
 
 
@@ -24,7 +26,7 @@ def detect_format(filename: str) -> str:
     Detect file format from filename.
 
     Returns:
-        'csv', 'tsv', or 'parquet'
+        'csv', 'tsv', 'parquet', or 'excel'
 
     Raises:
         ValueError: If format not supported
@@ -70,6 +72,9 @@ def load_file(
         df = pd.read_parquet(source, **kwargs)
     elif fmt == 'tsv':
         df = pd.read_csv(source, sep='\t', **kwargs)
+    elif fmt == 'excel':
+        # Excel files - uses openpyxl for .xlsx, xlrd for .xls
+        df = pd.read_excel(source, **kwargs)
     else:  # csv
         # Support comment lines starting with #
         csv_kwargs = {'comment': '#'}
@@ -102,6 +107,8 @@ def preview_file(
         return df.head(n_rows)
     elif fmt == 'tsv':
         return pd.read_csv(source, sep='\t', nrows=n_rows)
+    elif fmt == 'excel':
+        return pd.read_excel(source, nrows=n_rows)
     else:
         return pd.read_csv(source, comment='#', nrows=n_rows)
 
