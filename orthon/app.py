@@ -1,390 +1,293 @@
 """
-ORTHON Streamlit Application
-============================
+Orthon — Drop Data, Get Physics
 
-User-facing interface for PRISM analysis.
-
-1. Upload data
-2. Profile & recommend config
-3. User confirms/edits
-4. Run PRISM (with progress)
-5. Display results + ML discovery
-
-PRISM computes. ORTHON interprets.
+MVP Streamlit app:
+1. Instructions to prepare data
+2. Upload file
+3. Report on what was uploaded
+4. Download results back
 """
 
-import sys
-from pathlib import Path
-import tempfile
+import streamlit as st
+import pandas as pd
+from datetime import datetime
 
-try:
-    import streamlit as st
-except ImportError:
-    print("ERROR: streamlit required. pip install streamlit")
-    print("       Or: pip install orthon[ui]")
-    sys.exit(1)
-
-import polars as pl
-
-from orthon.data_reader import DataReader
-from orthon.config.recommender import ConfigRecommender
-from orthon.compute.prism_runner import run_prism
-from orthon.ml.discovery import DiscoveryEngine
-
-
-# Page config
-st.set_page_config(page_title="ORTHON", page_icon="🔬", layout="wide")
-
+st.set_page_config(page_title="Orthon", page_icon="⚡", layout="wide")
 
 # =============================================================================
-# SESSION STATE
+# UNIT DETECTION
 # =============================================================================
-if 'step' not in st.session_state:
-    st.session_state.step = 'upload'
-if 'data_path' not in st.session_state:
-    st.session_state.data_path = None
-if 'profile' not in st.session_state:
-    st.session_state.profile = None
-if 'config' not in st.session_state:
-    st.session_state.config = None
-if 'results' not in st.session_state:
-    st.session_state.results = None
-if 'output_dir' not in st.session_state:
-    st.session_state.output_dir = None
+
+SUFFIX_TO_UNIT = {
+    '_psi': ('psi', 'pressure'), '_bar': ('bar', 'pressure'), '_kpa': ('kPa', 'pressure'),
+    '_f': ('°F', 'temperature'), '_c': ('°C', 'temperature'), '_k': ('K', 'temperature'),
+    '_degf': ('°F', 'temperature'), '_degc': ('°C', 'temperature'), '_degr': ('°R', 'temperature'),
+    '_gpm': ('gpm', 'flow'), '_lpm': ('L/min', 'flow'),
+    '_mps': ('m/s', 'velocity'), '_fps': ('ft/s', 'velocity'),
+    '_m': ('m', 'length'), '_mm': ('mm', 'length'), '_in': ('in', 'length'), '_ft': ('ft', 'length'),
+    '_kg': ('kg', 'mass'), '_lb': ('lb', 'mass'),
+    '_rpm': ('rpm', 'frequency'), '_hz': ('Hz', 'frequency'),
+    '_v': ('V', 'voltage'), '_a': ('A', 'current'), '_w': ('W', 'power'), '_kw': ('kW', 'power'),
+    '_pct': ('%', 'ratio'),
+}
+
+ENTITY_COLS = ['entity_id', 'unit_id', 'equipment_id', 'asset_id', 'machine_id', 'engine_id', 'pump_id', 'id', 'unit']
+TIME_COLS = ['timestamp', 'time', 'datetime', 'date', 'cycle', 't']
 
 
-# =============================================================================
-# HEADER
-# =============================================================================
-st.title("ORTHON")
-st.caption("Diagnostic interpreter for PRISM outputs")
-
-
-# =============================================================================
-# STEP 1: UPLOAD
-# =============================================================================
-if st.session_state.step == 'upload':
-    st.header("Upload Data")
-
-    uploaded = st.file_uploader(
-        "Time series data (CSV, Parquet, TSV)",
-        type=['csv', 'parquet', 'tsv']
-    )
-
-    if uploaded:
-        # Save temp file
-        suffix = Path(uploaded.name).suffix
-        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as f:
-            f.write(uploaded.getvalue())
-            st.session_state.data_path = Path(f.name)
-
-        # Profile
-        reader = DataReader()
-        reader.read(st.session_state.data_path)
-        st.session_state.profile = reader.profile_data()
-
-        p = st.session_state.profile
-        st.success(f"Loaded {p.n_rows:,} rows from {uploaded.name}")
-
-        col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Entities", p.n_entities)
-        col2.metric("Signals", p.n_signals)
-        col3.metric("Median Lifecycle", f"{p.median_lifecycle:.0f}")
-        col4.metric("Nulls", f"{p.null_pct:.1f}%")
-
-        with st.expander("Signal names"):
-            st.write(p.signal_names)
-
-        if st.button("Configure", type="primary"):
-            st.session_state.step = 'config'
-            st.rerun()
-
-
-# =============================================================================
-# STEP 2: CONFIGURE
-# =============================================================================
-elif st.session_state.step == 'config':
-    st.header("Configuration")
-
-    profile = st.session_state.profile
-    recommender = ConfigRecommender(profile)
-    rec = recommender.recommend()
-
-    # Show recommendation rationale
-    confidence_colors = {'high': 'green', 'medium': 'orange', 'low': 'red'}
-    st.markdown(f"**Confidence:** :{confidence_colors[rec.window.confidence]}[{rec.window.confidence.upper()}]")
-
-    with st.expander("Recommendation rationale", expanded=True):
-        st.markdown(rec.window.rationale)
-
-    # Editable config
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.subheader("Windowing")
-        window_size = st.number_input(
-            "Window Size",
-            min_value=5,
-            max_value=int(profile.max_lifecycle * 0.9),
-            value=rec.window.window_size,
-            help="Number of samples per window"
-        )
-
-        window_stride = st.number_input(
-            "Window Stride",
-            min_value=1,
-            max_value=window_size,
-            value=rec.window.window_stride,
-            help="Samples between window starts"
-        )
-
-        overlap = (1 - window_stride / window_size) * 100 if window_size > 0 else 0
-        st.caption(f"Overlap: {overlap:.0f}%")
-
-    with col2:
-        st.subheader("Clustering")
-        n_clusters = st.number_input(
-            "Clusters",
-            min_value=2,
-            max_value=10,
-            value=rec.n_clusters,
-            help="For geometry layer"
-        )
-
-        n_regimes = st.number_input(
-            "Regimes",
-            min_value=2,
-            max_value=10,
-            value=rec.n_regimes,
-            help="For dynamics layer"
-        )
-
-    # Preview
-    n_windows = max(1, int((profile.median_lifecycle - window_size) / window_stride) + 1)
-    min_win = max(1, int((profile.min_lifecycle - window_size) / window_stride) + 1)
-
-    st.divider()
-    st.markdown(f"**Preview:** ~{n_windows} windows per entity (median), shortest entity gets ~{min_win}")
-
-    if min_win < 5:
-        st.warning("Shortest entity has few windows. Consider smaller window size.")
-
-    # Navigation
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("Back"):
-            st.session_state.step = 'upload'
-            st.rerun()
-
-    with col2:
-        if st.button("Run PRISM", type="primary"):
-            st.session_state.config = {
-                'window_size': window_size,
-                'window_stride': window_stride,
-                'n_clusters': n_clusters,
-                'n_regimes': n_regimes,
-            }
-            st.session_state.step = 'compute'
-            st.rerun()
-
-
-# =============================================================================
-# STEP 3: COMPUTE (with progress)
-# =============================================================================
-elif st.session_state.step == 'compute':
-    st.header("Computing")
-
-    # Stage weights for progress calculation
-    STAGE_WEIGHTS = {
-        'init': 2,
-        'load': 3,
-        'characterize': 10,
-        'vector': 40,
-        'geometry': 15,
-        'dynamics': 20,
-        'physics': 10,
+def analyze(df):
+    """Analyze uploaded data"""
+    report = {
+        'rows': len(df),
+        'cols': len(df.columns),
+        'columns': [],
+        'signals': [],
+        'constants': [],
+        'entity_col': None,
+        'time_col': None,
+        'entities': [],
+        'issues': [],
+        'warnings': [],
     }
 
-    status_box = st.status("Starting PRISM...", expanded=True)
-    progress_bar = st.progress(0)
-    stage_text = st.empty()
+    for col in df.columns:
+        name_lower = col.lower()
 
-    stage_progress = {k: 0 for k in STAGE_WEIGHTS}
-    output_dir = Path(tempfile.mkdtemp(prefix='orthon_results_'))
-    st.session_state.output_dir = output_dir
+        # Get unit
+        unit, category = None, None
+        for suffix, (u, c) in SUFFIX_TO_UNIT.items():
+            if name_lower.endswith(suffix):
+                unit, category = u, c
+                break
 
-    try:
-        for update in run_prism(
-            st.session_state.data_path,
-            st.session_state.config,
-            output_dir
-        ):
-            stage = update.get('stage', '')
-            message = update.get('message', '')
-            progress = update.get('progress', 0)
+        info = {'name': col, 'unit': unit, 'category': category, 'dtype': str(df[col].dtype)}
 
-            if stage in stage_progress:
-                stage_progress[stage] = progress
+        if pd.api.types.is_numeric_dtype(df[col]):
+            info['min'] = float(df[col].min())
+            info['max'] = float(df[col].max())
+            info['mean'] = float(df[col].mean())
+            info['nulls'] = int(df[col].isna().sum())
+            info['unique'] = int(df[col].nunique())
 
-            # Calculate global progress
-            total_weight = sum(STAGE_WEIGHTS.values())
-            weighted_progress = sum(
-                STAGE_WEIGHTS.get(s, 0) * stage_progress.get(s, 0) / 100
-                for s in STAGE_WEIGHTS
-            )
-            global_progress = int(100 * weighted_progress / total_weight)
+        report['columns'].append(info)
 
-            progress_bar.progress(min(global_progress, 99))
-            stage_text.markdown(f"**{stage}:** {message}")
+        # Classify
+        if name_lower in ENTITY_COLS:
+            report['entity_col'] = col
+            report['entities'] = df[col].unique().tolist()
+        elif name_lower in TIME_COLS:
+            report['time_col'] = col
+        elif pd.api.types.is_numeric_dtype(df[col]):
+            if df[col].nunique() == 1:
+                report['constants'].append(col)
+            else:
+                report['signals'].append(col)
 
-            if stage == 'complete':
-                status_box.update(label="Complete!", state="complete")
-                progress_bar.progress(100)
+    # Sanity checks
+    for info in report['columns']:
+        col = info['name']
+        if info.get('nulls', 0) == report['rows']:
+            report['issues'].append(f"`{col}` is entirely null")
+        elif info.get('nulls', 0) > 0:
+            report['warnings'].append(f"`{col}` has {info['nulls']} nulls ({info['nulls']/report['rows']*100:.1f}%)")
 
-                # Load results
-                results = {}
-                for name in ['observations', 'vector', 'geometry', 'dynamics', 'physics']:
-                    parquet_path = output_dir / f'{name}.parquet'
-                    if parquet_path.exists():
-                        results[name] = pl.read_parquet(parquet_path)
+        if info.get('category') == 'temperature':
+            if info.get('min', 0) < -273:
+                report['issues'].append(f"`{col}` has temp below absolute zero")
 
-                st.session_state.results = results
+        if info.get('category') == 'pressure':
+            if info.get('min', 0) < 0:
+                report['warnings'].append(f"`{col}` has negative pressure")
 
-                if st.button("View Results", type="primary"):
-                    st.session_state.step = 'results'
-                    st.rerun()
-
-    except ImportError as e:
-        st.error(str(e))
-        if st.button("Back to Config"):
-            st.session_state.step = 'config'
-            st.rerun()
-
-    except Exception as e:
-        st.error(f"PRISM failed: {e}")
-        if st.button("Back to Config"):
-            st.session_state.step = 'config'
-            st.rerun()
+    return report
 
 
 # =============================================================================
-# STEP 4: RESULTS
+# UI
 # =============================================================================
-elif st.session_state.step == 'results':
+
+st.title("⚡ Orthon")
+st.caption("Drop data. Get physics.")
+
+tab1, tab2, tab3 = st.tabs(["📖 Instructions", "📤 Upload", "📊 Results"])
+
+# -----------------------------------------------------------------------------
+# INSTRUCTIONS
+# -----------------------------------------------------------------------------
+
+with tab1:
+    st.header("How to Prepare Your Data")
+
+    st.markdown("""
+### Quick Start
+
+**Name your columns with units. We figure out the rest.**
+
+```csv
+timestamp, flow_gpm, pressure_psi, temp_F
+2024-01-01 08:00, 50, 120, 150
+2024-01-01 08:01, 51, 121, 151
+```
+
+---
+
+### Unit Suffixes
+
+| Measurement | Suffixes |
+|-------------|----------|
+| Pressure | `_psi`, `_bar`, `_kpa` |
+| Temperature | `_F`, `_C`, `_K`, `_degF`, `_degR` |
+| Flow | `_gpm`, `_lpm` |
+| Length | `_in`, `_ft`, `_m`, `_mm` |
+| Speed | `_rpm`, `_hz` |
+| Electrical | `_V`, `_A`, `_W`, `_kW` |
+
+---
+
+### Multiple Equipment
+
+Add an `entity_id` column:
+
+```csv
+entity_id, diameter_in, flow_gpm, pressure_psi
+P-101, 4, 50, 120
+P-101, 4, 51, 121
+P-102, 6, 100, 115
+```
+
+We detect:
+- `entity_id` → grouping column
+- `diameter_in` → constant per entity
+- `flow_gpm`, `pressure_psi` → signals
+
+---
+
+### Supported Formats
+
+- CSV ✅
+- Parquet ✅
+- TSV ✅
+""")
+
+# -----------------------------------------------------------------------------
+# UPLOAD
+# -----------------------------------------------------------------------------
+
+with tab2:
+    st.header("Upload Your Data")
+
+    uploaded = st.file_uploader("CSV, Parquet, or TSV", type=['csv', 'parquet', 'tsv', 'txt'])
+
+    if uploaded:
+        try:
+            if uploaded.name.endswith('.parquet'):
+                df = pd.read_parquet(uploaded)
+            elif uploaded.name.endswith('.tsv'):
+                df = pd.read_csv(uploaded, sep='\t')
+            else:
+                df = pd.read_csv(uploaded, comment='#')
+
+            st.session_state['df'] = df
+            st.session_state['filename'] = uploaded.name
+
+            st.success(f"✅ `{uploaded.name}` — {len(df):,} rows × {len(df.columns)} columns")
+            st.dataframe(df.head(10), use_container_width=True)
+
+            if st.button("🔍 Analyze", type="primary"):
+                st.session_state['report'] = analyze(df)
+                st.success("Done! See Results tab →")
+
+        except Exception as e:
+            st.error(f"Error: {e}")
+
+# -----------------------------------------------------------------------------
+# RESULTS
+# -----------------------------------------------------------------------------
+
+with tab3:
     st.header("Results")
 
-    results = st.session_state.results
-
-    if not results:
-        st.warning("No results available")
-        if st.button("Start Over"):
-            st.session_state.step = 'upload'
-            st.rerun()
+    if 'report' not in st.session_state:
+        st.info("Upload a file and click Analyze first.")
     else:
-        # Tabs for different views
-        tabs = st.tabs(["Summary", "Dynamics", "Physics", "Geometry", "ML Discovery"])
+        r = st.session_state['report']
+        df = st.session_state['df']
 
-        # SUMMARY TAB
-        with tabs[0]:
-            col1, col2, col3 = st.columns(3)
+        # Metrics
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Rows", f"{r['rows']:,}")
+        c2.metric("Columns", r['cols'])
+        c3.metric("Signals", len(r['signals']))
+        c4.metric("Entities", len(r['entities']) or 1)
 
-            if 'dynamics' in results and not results['dynamics'].is_empty():
-                dyn = results['dynamics']
-                if 'hd_slope' in dyn.columns:
-                    mean_slope = dyn['hd_slope'].mean()
-                    col1.metric("Mean hd_slope", f"{mean_slope:.4f}")
+        # Issues
+        if r['issues']:
+            st.error("**Issues**")
+            for i in r['issues']:
+                st.write(f"❌ {i}")
 
-                    degrading = (dyn['hd_slope'] < -0.01).sum()
-                    col2.metric("Degrading", f"{degrading}/{len(dyn)}")
+        if r['warnings']:
+            st.warning("**Warnings**")
+            for w in r['warnings']:
+                st.write(f"⚠️ {w}")
 
-                    critical = (dyn['hd_slope'] < -0.05).sum()
-                    col3.metric("Critical", f"{critical}/{len(dyn)}")
+        if not r['issues'] and not r['warnings']:
+            st.success("✅ Data looks good!")
 
-            if 'geometry' in results and not results['geometry'].is_empty():
-                geo = results['geometry']
-                if 'effective_dimensionality' in geo.columns:
-                    eff_dim = geo['effective_dimensionality'].mean()
-                    st.metric("Effective Dimensionality", f"{eff_dim:.2f}")
+        # Structure
+        st.subheader("Structure")
+        st.write(f"**Time:** `{r['time_col'] or 'not detected'}`")
+        st.write(f"**Entity:** `{r['entity_col'] or 'single entity'}`")
+        if r['entities']:
+            st.write(f"**Found:** {', '.join(str(e) for e in r['entities'][:10])}" +
+                    (f" (+{len(r['entities'])-10} more)" if len(r['entities']) > 10 else ""))
 
-        # DYNAMICS TAB
-        with tabs[1]:
-            st.subheader("Dynamics")
-            if 'dynamics' in results and not results['dynamics'].is_empty():
-                st.dataframe(results['dynamics'].to_pandas(), use_container_width=True)
-            else:
-                st.info("No dynamics data available")
+        # Signals table
+        st.subheader("Signals")
+        signal_rows = []
+        for info in r['columns']:
+            if info['name'] in r['signals']:
+                signal_rows.append({
+                    'Column': info['name'],
+                    'Unit': info['unit'] or '?',
+                    'Min': f"{info.get('min', 0):.4g}",
+                    'Max': f"{info.get('max', 0):.4g}",
+                    'Mean': f"{info.get('mean', 0):.4g}",
+                })
+        if signal_rows:
+            st.dataframe(pd.DataFrame(signal_rows), hide_index=True, use_container_width=True)
 
-        # PHYSICS TAB
-        with tabs[2]:
-            st.subheader("Physics")
-            if 'physics' in results and not results['physics'].is_empty():
-                st.dataframe(results['physics'].to_pandas(), use_container_width=True)
-            else:
-                st.info("No physics data available")
+        # Downloads
+        st.subheader("Download")
 
-        # GEOMETRY TAB
-        with tabs[3]:
-            st.subheader("Geometry")
-            if 'geometry' in results and not results['geometry'].is_empty():
-                st.dataframe(results['geometry'].to_pandas(), use_container_width=True)
-            else:
-                st.info("No geometry data available")
+        report_json = {
+            'file': st.session_state.get('filename'),
+            'analyzed': datetime.now().isoformat(),
+            'rows': r['rows'],
+            'signals': r['signals'],
+            'constants': r['constants'],
+            'entities': r['entities'],
+            'time_col': r['time_col'],
+            'entity_col': r['entity_col'],
+            'columns': r['columns'],
+            'issues': r['issues'],
+            'warnings': r['warnings'],
+        }
 
-        # ML DISCOVERY TAB
-        with tabs[4]:
-            st.subheader("ML Discovery")
-            st.markdown("*Finding interesting patterns in dynamics + physics...*")
+        c1, c2 = st.columns(2)
+        c1.download_button(
+            "📄 Report (JSON)",
+            data=pd.io.json.dumps(report_json, indent=2),
+            file_name=f"orthon_report_{datetime.now():%Y%m%d_%H%M%S}.json",
+            mime="application/json"
+        )
+        c2.download_button(
+            "📊 Signals (CSV)",
+            data=pd.DataFrame(signal_rows).to_csv(index=False) if signal_rows else "",
+            file_name=f"orthon_signals_{datetime.now():%Y%m%d_%H%M%S}.csv",
+            mime="text/csv"
+        )
 
-            dynamics = results.get('dynamics', pl.DataFrame())
-            physics = results.get('physics', pl.DataFrame())
-
-            engine = DiscoveryEngine(dynamics, physics)
-            findings = engine.discover()
-
-            if findings:
-                for i, finding in enumerate(findings, 1):
-                    severity_icons = {
-                        'critical': '🔴',
-                        'warning': '🟡',
-                        'info': '🔵'
-                    }
-                    icon = severity_icons.get(finding.get('severity', 'info'), '🔵')
-
-                    with st.expander(f"{icon} {finding['title']}", expanded=(i <= 3)):
-                        st.markdown(finding['description'])
-                        if finding.get('recommendation'):
-                            st.info(f"Recommendation: {finding['recommendation']}")
-            else:
-                st.info("No significant patterns detected.")
-
-        # Export / Navigation
-        st.divider()
-        col1, col2 = st.columns(2)
-
-        with col1:
-            if st.button("New Analysis"):
-                st.session_state.step = 'upload'
-                st.session_state.results = None
-                st.session_state.data_path = None
-                st.session_state.profile = None
-                st.session_state.config = None
-                st.rerun()
-
-        with col2:
-            if st.session_state.output_dir:
-                st.caption(f"Results saved to: {st.session_state.output_dir}")
-
-
-# =============================================================================
-# MAIN
-# =============================================================================
-def main():
-    """Entry point for streamlit run."""
-    # Streamlit runs this file directly, so this is just for CLI
-    import subprocess
-    subprocess.run(['streamlit', 'run', __file__])
-
-
-if __name__ == '__main__':
-    # When run directly, just let Streamlit handle it
-    pass
+# Footer
+st.divider()
+st.caption("Orthon — *Systems lose coherence before they fail*")
