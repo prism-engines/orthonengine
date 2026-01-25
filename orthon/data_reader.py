@@ -100,7 +100,7 @@ class DataReader:
             'battery_id', 'engine_id', 'device_id', 'sensor_id'
         ]
         for col in columns:
-            if col.lower() in [c.lower() for c in entity_candidates]:
+            if str(col).lower() in [c.lower() for c in entity_candidates]:
                 detected['entity_id'] = col
                 break
 
@@ -110,7 +110,7 @@ class DataReader:
             'date', 'step', 'sample', 'index'
         ]
         for col in columns:
-            if col.lower() in [c.lower() for c in time_candidates]:
+            if str(col).lower() in [c.lower() for c in time_candidates]:
                 detected['timestamp'] = col
                 break
 

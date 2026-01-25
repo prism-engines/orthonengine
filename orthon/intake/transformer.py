@@ -82,7 +82,7 @@ ENTITY_PATTERNS = [
 
 def detect_unit(col_name: str) -> Optional[str]:
     """Detect unit from column name suffix"""
-    name_lower = col_name.lower()
+    name_lower = str(col_name).lower()
     for suffix, unit in SUFFIX_TO_UNIT.items():
         if name_lower.endswith(suffix):
             return unit
@@ -91,6 +91,7 @@ def detect_unit(col_name: str) -> Optional[str]:
 
 def strip_unit_suffix(col_name: str) -> str:
     """Remove unit suffix from column name to get signal_id"""
+    col_name = str(col_name)
     name_lower = col_name.lower()
     for suffix in SUFFIX_TO_UNIT.keys():
         if name_lower.endswith(suffix):
@@ -100,12 +101,12 @@ def strip_unit_suffix(col_name: str) -> str:
 
 def is_sequence_column(col_name: str) -> bool:
     """Check if column is a sequence (x-axis) column"""
-    return col_name.lower() in SEQUENCE_PATTERNS
+    return str(col_name).lower() in SEQUENCE_PATTERNS
 
 
 def is_entity_column(col_name: str) -> bool:
     """Check if column is an entity grouping column"""
-    return col_name.lower() in ENTITY_PATTERNS
+    return str(col_name).lower() in ENTITY_PATTERNS
 
 
 # =============================================================================
@@ -314,7 +315,7 @@ class IntakeTransformer:
         # Determine sequence name
         sequence_name = "index"
         if structure['sequence_column']:
-            seq_lower = structure['sequence_column'].lower()
+            seq_lower = str(structure['sequence_column']).lower()
             if any(t in seq_lower for t in ['time', 'date', 'ts']):
                 sequence_name = "time"
             elif any(t in seq_lower for t in ['depth', 'tvd', 'md']):

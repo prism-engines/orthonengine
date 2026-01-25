@@ -97,7 +97,7 @@ def detect_units(column_name: str) -> Tuple[Optional[str], Optional[str]]:
     Returns:
         (unit, category) or (None, None) if not detected
     """
-    name_lower = column_name.lower()
+    name_lower = str(column_name).lower()
 
     for suffix, (unit, category) in SUFFIX_TO_UNIT.items():
         if name_lower.endswith(suffix):
@@ -128,7 +128,7 @@ def detect_columns(df: pd.DataFrame) -> Dict[str, Any]:
     }
 
     for col in df.columns:
-        name_lower = col.lower()
+        name_lower = str(col).lower()
 
         # Check for entity column
         if name_lower in ENTITY_COLUMNS:
