@@ -15,8 +15,10 @@ Usage:
 from pathlib import Path
 from typing import Optional
 import tempfile
+import json
 
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 import polars as pl
@@ -32,12 +34,27 @@ from orthon.config.domains import (
     generate_config,
 )
 from orthon.shared import DISCIPLINES
+from orthon.prism_client import get_prism_client, prism_status
+from orthon.inspect import inspect_file, detect_capabilities, validate_results
+
+
+# Store last results path for serving
+_last_results_path: Optional[Path] = None
 
 
 app = FastAPI(
     title="ORTHON",
     description="Diagnostic interpreter for PRISM outputs",
     version="0.1.0",
+)
+
+# CORS for local development
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Static files (HTML shell)
@@ -279,6 +296,181 @@ async def generate_domain_config(domain: str, data: dict):
 
     config = generate_config(domain, equations, signals, inputs)
     return {"config": config}
+
+
+# =============================================================================
+# INSPECTION ENDPOINTS
+# =============================================================================
+
+@app.post("/api/inspect")
+async def inspect_uploaded_file(file: UploadFile = File(...)):
+    """
+    Inspect uploaded file and detect structure.
+
+    Returns:
+        - Detected entities, signals, constants
+        - Units from column names
+        - Capabilities (what can be computed)
+    """
+    # Save uploaded file temporarily
+    suffix = Path(file.filename).suffix if file.filename else '.csv'
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        content = await file.read()
+        tmp.write(content)
+        tmp_path = Path(tmp.name)
+
+    try:
+        # Inspect file
+        inspection = inspect_file(str(tmp_path))
+
+        # Detect capabilities
+        capabilities = detect_capabilities(inspection)
+
+        return {
+            "inspection": inspection.to_dict(),
+            "capabilities": capabilities.to_dict(),
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+
+@app.post("/api/validate-results")
+async def validate_prism_results():
+    """
+    Validate the last PRISM results.
+
+    Checks:
+        - Parquet files are valid (not corrupted)
+        - Files are not empty
+        - Expected columns present
+    """
+    global _last_results_path
+
+    if _last_results_path is None:
+        raise HTTPException(status_code=404, detail="No results to validate. Run compute first.")
+
+    try:
+        validation = validate_results(str(_last_results_path))
+        return validation.to_dict()
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# PRISM ENDPOINTS
+# =============================================================================
+
+@app.get("/api/prism/health")
+async def prism_health():
+    """Check if PRISM is available."""
+    return prism_status()
+
+
+@app.post("/api/prism/compute")
+async def prism_compute(
+    file: UploadFile = File(...),
+    discipline: str = Form("core"),
+    window_size: int = Form(50),
+    window_stride: int = Form(25),
+    constants: Optional[str] = Form(None),
+):
+    """
+    Send data to PRISM for computation.
+
+    1. Save uploaded file
+    2. Call PRISM /compute
+    3. Return results location
+
+    Args:
+        constants: JSON string of global constants (density, viscosity, etc.)
+    """
+    # Save uploaded file
+    suffix = Path(file.filename).suffix if file.filename else '.csv'
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        content = await file.read()
+        tmp.write(content)
+        observations_path = tmp.name
+
+    # Create output directory
+    output_dir = tempfile.mkdtemp(prefix="orthon_results_")
+
+    try:
+        # Build config
+        config = {
+            "discipline": discipline,
+            "window": {
+                "size": window_size,
+                "stride": window_stride,
+            }
+        }
+
+        # Add global constants if provided
+        if constants:
+            try:
+                parsed_constants = json.loads(constants)
+                # Filter out empty values
+                global_constants = {k: v for k, v in parsed_constants.items() if v is not None and v != ""}
+                if global_constants:
+                    config["global_constants"] = global_constants
+            except json.JSONDecodeError:
+                pass  # Ignore malformed JSON
+
+        # Call PRISM
+        client = get_prism_client()
+        result = client.compute(
+            config=config,
+            observations_path=observations_path,
+            output_dir=output_dir,
+        )
+
+        if result.get("status") == "error":
+            raise HTTPException(status_code=500, detail=result.get("message", "PRISM error"))
+
+        # List result parquets
+        results_path = Path(result.get("results_path", output_dir))
+        parquets = list(results_path.glob("*.parquet"))
+
+        # Store results path for serving
+        global _last_results_path
+        _last_results_path = results_path
+
+        return {
+            "status": "complete",
+            "results_path": str(results_path),
+            "parquets": [p.name for p in parquets],
+            "parquet_urls": [f"/api/prism/results/{p.name}" for p in parquets],
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        # Clean up input file (but keep results for download)
+        Path(observations_path).unlink(missing_ok=True)
+
+
+@app.get("/api/prism/results/{filename}")
+async def get_prism_result(filename: str):
+    """Serve a PRISM result parquet file."""
+    global _last_results_path
+
+    if _last_results_path is None:
+        raise HTTPException(status_code=404, detail="No results available. Run compute first.")
+
+    file_path = _last_results_path / filename
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail=f"Result file not found: {filename}")
+
+    return FileResponse(
+        file_path,
+        media_type="application/octet-stream",
+        filename=filename,
+    )
 
 
 def main():

@@ -375,6 +375,75 @@
         }
 
         @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* Config Editor */
+        .config-editor-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            padding: 1rem;
+            overflow: hidden;
+        }
+
+        #config-editor {
+            flex: 1;
+            width: 100%;
+            min-height: 400px;
+            background: var(--input);
+            color: var(--text);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            padding: 1rem;
+            font-family: inherit;
+            font-size: 0.8rem;
+            line-height: 1.5;
+            resize: none;
+            tab-size: 2;
+        }
+
+        #config-editor:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        .config-actions {
+            display: flex;
+            gap: 0.5rem;
+            margin-top: 0.75rem;
+        }
+
+        .config-actions .btn-save {
+            background: #1a6b3a;
+            border-color: #2a8b4a;
+        }
+
+        .config-actions .btn-save:hover {
+            background: #2a8b4a;
+        }
+
+        .validation-message {
+            margin-top: 0.75rem;
+            padding: 0.5rem 0.75rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+        }
+
+        .validation-message.valid {
+            background: rgba(63, 185, 80, 0.15);
+            color: var(--green);
+        }
+
+        .validation-message.invalid {
+            background: rgba(248, 81, 73, 0.15);
+            color: var(--red);
+        }
+
+        .validation-message.warning {
+            background: rgba(210, 153, 34, 0.15);
+            color: var(--yellow);
+        }
+
+        #config-file-input { display: none; }
     </style>
 </head>
 <body>
@@ -382,11 +451,16 @@
         <div class="logo"><span>Ø</span>rthon</div>
         <div class="nav-tabs">
             <button class="nav-tab active" onclick="showView('data')">Data</button>
+            <button class="nav-tab" onclick="showView('config')">Config</button>
             <button class="nav-tab" onclick="showView('schema')">Schema</button>
             <button class="nav-tab" onclick="showView('query')">Query</button>
             <button class="nav-tab" onclick="showView('stats')">Stats</button>
         </div>
         <div class="header-right">
+            <div id="prism-status" class="loading" style="margin-right: 1rem;">
+                <div class="spinner"></div>
+                <span>Checking PRISM...</span>
+            </div>
             <div id="db-status" class="loading">
                 <div class="spinner"></div>
                 <span>Loading DuckDB...</span>
@@ -403,25 +477,79 @@
                     <div class="upload-icon">📁</div>
                     <div class="upload-text">Drop parquet or click</div>
                 </div>
-                <input type="file" id="file-input" accept=".parquet,.csv" onchange="onFile(this)">
+                <input type="file" id="file-input" accept=".parquet,.csv,.xlsx" onchange="onFile(this)">
                 <div id="file-info" class="file-info" style="display:none"></div>
             </div>
 
-            <!-- Config -->
-            <div class="sidebar-section">
-                <div class="section-title">
-                    Config
-                    <button class="btn btn-sm" onclick="loadExample()">Example</button>
-                </div>
-                <textarea id="config" rows="10" placeholder="# YAML config...
-window_size: 50
-window_stride: 25
+            <!-- Inspection Results -->
+            <div class="sidebar-section" id="inspection-section" style="display: none;">
+                <a href="#" onclick="toggleConstants(); return false;" id="constants-toggle" style="font-size: 0.65rem; color: var(--accent); text-decoration: none; display: block; margin-bottom: 0.4rem;">+ Add Constants</a>
+                <div id="constants-panel" style="display: none; margin-bottom: 0.75rem; padding: 0.5rem; background: var(--input); border-radius: 4px;">
+                    <div style="display: grid; grid-template-columns: 1fr 80px; gap: 0.3rem; font-size: 0.7rem;">
+                        <label style="color: var(--dim); align-self: center;">Density (kg/m³)</label>
+                        <input type="number" id="const-density" placeholder="—" style="background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 0.25rem; border-radius: 3px; font: inherit; font-size: 0.7rem;">
 
-signals:
-  - name: sensor_1
-"></textarea>
+                        <label style="color: var(--dim); align-self: center;">Viscosity (Pa·s)</label>
+                        <input type="number" id="const-viscosity" placeholder="—" step="0.0001" style="background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 0.25rem; border-radius: 3px; font: inherit; font-size: 0.7rem;">
+
+                        <label style="color: var(--dim); align-self: center;">Diameter (m)</label>
+                        <input type="number" id="const-diameter" placeholder="—" step="0.001" style="background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 0.25rem; border-radius: 3px; font: inherit; font-size: 0.7rem;">
+
+                        <label style="color: var(--dim); align-self: center;">Pipe Length (m)</label>
+                        <input type="number" id="const-length" placeholder="—" style="background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 0.25rem; border-radius: 3px; font: inherit; font-size: 0.7rem;">
+
+                        <label style="color: var(--dim); align-self: center;">Temperature (K)</label>
+                        <input type="number" id="const-temperature" placeholder="—" style="background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 0.25rem; border-radius: 3px; font: inherit; font-size: 0.7rem;">
+
+                        <label style="color: var(--dim); align-self: center;">Pressure (Pa)</label>
+                        <input type="number" id="const-pressure" placeholder="—" style="background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 0.25rem; border-radius: 3px; font: inherit; font-size: 0.7rem;">
+                    </div>
+                    <div style="margin-top: 0.5rem; font-size: 0.6rem; color: var(--dim);">
+                        Constants unlock physics engines (Reynolds, pressure drop, etc.)
+                    </div>
+                </div>
+                <div class="section-title">
+                    Detected Structure
+                    <span id="inspection-level" style="font-size: 0.65rem; padding: 0.1rem 0.3rem; background: var(--accent); color: var(--bg); border-radius: 3px;">—</span>
+                </div>
+                <div id="inspection-content" style="font-size: 0.7rem;">
+                    <!-- Filled by JS -->
+                </div>
+            </div>
+
+            <!-- Download Results -->
+            <div class="sidebar-section" id="download-section" style="display: none;">
+                <button class="btn" onclick="downloadResults()" style="width: 100%;">Download Results (.zip)</button>
+            </div>
+
+            <!-- PRISM Analysis -->
+            <div class="sidebar-section">
+                <div class="section-title">PRISM Analysis</div>
+                <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+                    <label style="font-size: 0.7rem; color: var(--dim);">Discipline</label>
+                    <select id="discipline-select" style="background: var(--input); border: 1px solid var(--border); color: var(--text); padding: 0.4rem 0.5rem; border-radius: 4px; font: inherit; font-size: 0.75rem;">
+                        <option value="core" selected>Core Analysis</option>
+                        <option value="thermodynamics">Thermodynamics</option>
+                        <option value="transport">Transport Phenomena</option>
+                        <option value="reaction">Reaction Engineering</option>
+                        <option value="process_control">Process Control</option>
+                        <option value="mechanical">Mechanical Systems</option>
+                        <option value="electrical">Electrical Systems</option>
+                        <option value="fluid_dynamics">Fluid Dynamics</option>
+                    </select>
+                    <label style="font-size: 0.7rem; color: var(--dim);">Window Size</label>
+                    <input type="number" id="window-size" value="50" min="5" style="background: var(--input); border: 1px solid var(--border); color: var(--text); padding: 0.4rem 0.5rem; border-radius: 4px; font: inherit; font-size: 0.75rem;">
+                    <label style="font-size: 0.7rem; color: var(--dim);">Window Stride</label>
+                    <input type="number" id="window-stride" value="25" min="1" style="background: var(--input); border: 1px solid var(--border); color: var(--text); padding: 0.4rem 0.5rem; border-radius: 4px; font: inherit; font-size: 0.75rem;">
+                </div>
                 <div class="actions">
-                    <button class="btn btn-primary" onclick="check()">Check</button>
+                    <button class="btn btn-primary" id="analyze-btn" onclick="analyzeWithPRISM()" disabled>Analyze with PRISM</button>
+                </div>
+                <div id="prism-progress" style="display: none; margin-top: 0.5rem;">
+                    <div class="loading">
+                        <div class="spinner"></div>
+                        <span id="prism-progress-text">Sending to PRISM...</span>
+                    </div>
                 </div>
             </div>
 
@@ -454,6 +582,22 @@ signals:
                 </div>
             </div>
 
+            <!-- Config View -->
+            <div class="view" id="view-config">
+                <div class="config-editor-container">
+                    <textarea id="config-editor" spellcheck="false"></textarea>
+                    <div class="config-actions">
+                        <label class="btn" style="cursor: pointer;">
+                            Load File
+                            <input type="file" id="config-file-input" accept=".json,.yaml,.yml">
+                        </label>
+                        <button class="btn btn-save" id="config-save">Save</button>
+                        <button class="btn" id="config-reset">Reset to Example</button>
+                    </div>
+                    <div id="config-validation" class="validation-message"></div>
+                </div>
+            </div>
+
             <!-- Schema View -->
             <div class="view" id="view-schema">
                 <div class="toolbar">
@@ -470,10 +614,16 @@ signals:
             <!-- Query View -->
             <div class="view" id="view-query">
                 <div class="query-area">
+                    <div style="margin-bottom: 0.5rem;">
+                        <label style="font-size: 0.7rem; color: var(--dim); margin-right: 0.5rem;">Preset Queries:</label>
+                        <select id="query-select" onchange="loadPresetQuery(this.value)" style="background: var(--input); border: 1px solid var(--border); color: var(--text); padding: 0.3rem 0.5rem; border-radius: 4px; font: inherit; font-size: 0.7rem; min-width: 200px;">
+                            <option value="">-- Custom SQL --</option>
+                        </select>
+                    </div>
                     <textarea id="query-input" class="query-input" placeholder="SELECT * FROM data LIMIT 100"></textarea>
                     <div class="actions">
                         <button class="btn btn-primary" onclick="runQuery()">Run Query</button>
-                        <button class="btn" onclick="$('query-input').value = 'SELECT * FROM data LIMIT 100'">Reset</button>
+                        <button class="btn" onclick="$('query-input').value = 'SELECT * FROM data LIMIT 100'; $('query-select').value = '';">Reset</button>
                     </div>
                 </div>
                 <div class="table-wrapper" id="query-results">
@@ -497,6 +647,11 @@ signals:
     </main>
 
     <div id="status">
+        <div class="st">
+            <div class="st-dot" id="prism-dot"></div>
+            <span class="st-label">PRISM:</span>
+            <span id="prism-st">Checking...</span>
+        </div>
         <div class="st">
             <div class="st-dot" id="cfg-dot"></div>
             <span class="st-label">Config:</span>
@@ -523,6 +678,7 @@ signals:
         </div>
     </div>
 
+<script src="orthon-queries.js"></script>
 <script type="module">
 import * as duckdb from 'https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.28.0/+esm';
 
@@ -599,6 +755,12 @@ window.onFile = async function(input) {
         await loadTable('data');
         await loadSchema();
         await loadStats();
+
+        // Enable analyze button
+        updateAnalyzeButton();
+
+        // Inspect file for capabilities
+        await inspectFile(file);
 
     } catch (e) {
         console.error('File load error:', e);
@@ -822,46 +984,31 @@ const CAPS = {
 
 const LEVELS = ['Raw Series', 'Labeled', 'Constants', 'Related', 'Spatial'];
 
-function parseYAML(txt) {
-    const c = { signals: [], constants: {}, spatial: {} };
-    let section = null, sig = null;
-
-    for (let line of txt.split('\n')) {
-        if (line.trim().startsWith('#') || !line.trim()) continue;
-
-        const m = line.match(/^(\w+):\s*(.*)$/);
-        if (m) {
-            const [, k, v] = m;
-            if (v) c[k] = isNaN(v) ? v : +v;
-            else section = k;
-        } else if (line.match(/^\s+-\s+name:\s*(.+)/)) {
-            sig = { name: RegExp.$1 };
-            c.signals.push(sig);
-        } else if (sig && line.match(/^\s+physical_quantity:\s*(.+)/)) {
-            sig.pq = RegExp.$1;
-        } else if (section === 'constants' && line.match(/^\s+(\w+):\s*([\d.]+)/)) {
-            c.constants[RegExp.$1] = +RegExp.$2;
-        } else if (section === 'spatial' && line.match(/^\s+type:\s*(.+)/)) {
-            c.spatial.type = RegExp.$1;
-        } else if (section === 'relationships') {
-            if (line.match(/temperature|pressure|volume/)) c.thermo = true;
-            if (line.match(/input|output/)) c.control = true;
-        }
-    }
-    return c;
-}
-
-function detect(cfg) {
+function detectFromConfig(cfg) {
+    // Detect capabilities from JSON config
     const has = new Set();
 
-    if (cfg.signals.length >= 2) has.add('multi');
-    for (const s of cfg.signals) {
-        if (s.pq) { has.add('labeled'); has.add(s.pq); }
+    // Check signals
+    const signals = cfg.signals || [];
+    if (signals.length >= 2) has.add('multi');
+    for (const s of signals) {
+        if (s.type) has.add('labeled');
+        if (s.physical_quantity) has.add(s.physical_quantity);
     }
-    for (const k in cfg.constants) has.add(k);
-    if (cfg.thermo) ['temperature', 'pressure', 'volume'].forEach(x => has.add(x));
-    if (cfg.control) { has.add('input'); has.add('output'); }
-    if (cfg.spatial?.type === 'velocity_field') has.add('velocity_field');
+
+    // Check engines/layers for domain capabilities
+    const layers = cfg.layers || {};
+    const engines = cfg.engines || {};
+
+    // Check for constants from user input panel
+    const userConstants = getUserConstants();
+    for (const k of Object.keys(userConstants)) {
+        // Map constant names to capability requirements
+        if (k.includes('density')) has.add('density');
+        if (k.includes('viscosity')) has.add('viscosity');
+        if (k.includes('temperature')) has.add('temperature');
+        if (k.includes('pressure')) has.add('pressure');
+    }
 
     const ok = [], no = {};
     for (const [k, cap] of Object.entries(CAPS)) {
@@ -918,36 +1065,22 @@ function setSt(id, txt, state) {
 }
 window.setSt = setSt;
 
-window.check = function() {
-    const txt = $('config').value;
-    try {
-        const cfg = parseYAML(txt);
-        const res = detect(cfg);
+window.checkCapabilities = function() {
+    // Check capabilities from config tab
+    const cfg = getConfig();
+    if (!cfg) {
+        renderCaps({ ok: [], no: {}, lvl: 0 });
+        setLevel(0);
+        return;
+    }
 
+    try {
+        const res = detectFromConfig(cfg);
         renderCaps(res);
         setLevel(res.lvl);
-        setSt('cfg', `Valid (${cfg.signals.length} sig)`, 'ok');
     } catch (e) {
-        setSt('cfg', 'Invalid', 'err');
+        console.error('Capability detection error:', e);
     }
-};
-
-window.loadExample = function() {
-    $('config').value = `# Level 2: Mechanical
-window_size: 100
-window_stride: 50
-
-signals:
-  - name: position
-    physical_quantity: position
-  - name: velocity
-    physical_quantity: velocity
-
-constants:
-  mass: 2.0
-  spring_constant: 50.0
-`;
-    check();
 };
 
 // Drag and drop
@@ -963,10 +1096,684 @@ dz.ondrop = e => {
     }
 };
 
+// =====================================================================
+// FILE INSPECTION
+// =====================================================================
+
+let lastInspection = null;
+let lastCapabilities = null;
+
+async function inspectFile(file) {
+    try {
+        const formData = new FormData();
+        formData.append('file', file);
+
+        const r = await fetch('/api/inspect', {
+            method: 'POST',
+            body: formData,
+        });
+
+        if (!r.ok) {
+            console.warn('Inspection failed');
+            return;
+        }
+
+        const data = await r.json();
+        lastInspection = data.inspection;
+        lastCapabilities = data.capabilities;
+
+        // Show inspection section
+        $('inspection-section').style.display = 'block';
+        $('inspection-level').textContent = `L${lastCapabilities.level}`;
+        $('inspection-level').style.background = ['var(--dim)', 'var(--green)', 'var(--accent)', 'var(--purple)', 'var(--yellow)'][lastCapabilities.level] || 'var(--dim)';
+
+        // Build inspection content
+        let html = '';
+
+        // Entities
+        html += `<div style="margin-bottom: 0.5rem;">`;
+        html += `<span style="color: var(--dim);">Entities:</span> `;
+        html += `<span style="color: var(--green);">${lastInspection.entities?.length || 0}</span>`;
+        if (lastInspection.entities?.length <= 5) {
+            html += ` <span style="color: var(--dim);">(${lastInspection.entities?.join(', ')})</span>`;
+        }
+        html += `</div>`;
+
+        // Signals
+        const signals = lastInspection.signals?.filter(s => !s.is_entity_id && !s.is_sequence && !s.is_constant) || [];
+        html += `<div style="margin-bottom: 0.5rem;">`;
+        html += `<span style="color: var(--dim);">Signals:</span> `;
+        html += `<span style="color: var(--accent);">${signals.length}</span>`;
+        html += `</div>`;
+
+        // Signals with units
+        const withUnits = signals.filter(s => s.unit);
+        if (withUnits.length > 0) {
+            html += `<div style="margin-bottom: 0.5rem; padding-left: 0.5rem; border-left: 2px solid var(--border);">`;
+            for (const sig of withUnits.slice(0, 6)) {
+                html += `<div><span style="color: var(--text);">${sig.name}</span> <span style="color: var(--purple);">[${sig.unit}]</span></div>`;
+            }
+            if (withUnits.length > 6) {
+                html += `<div style="color: var(--dim);">...and ${withUnits.length - 6} more</div>`;
+            }
+            html += `</div>`;
+        }
+
+        // Constants
+        const constants = Object.keys(lastInspection.constants || {});
+        if (constants.length > 0) {
+            html += `<div style="margin-bottom: 0.5rem;">`;
+            html += `<span style="color: var(--dim);">Constants:</span> `;
+            html += `<span style="color: var(--yellow);">${constants.length}</span>`;
+            html += ` <span style="color: var(--dim);">(${constants.slice(0, 3).join(', ')}${constants.length > 3 ? '...' : ''})</span>`;
+            html += `</div>`;
+        }
+
+        // Available engines
+        html += `<div style="margin-bottom: 0.5rem;">`;
+        html += `<span style="color: var(--dim);">Engines:</span> `;
+        html += `<span style="color: var(--green);">${lastCapabilities.available_engines?.length || 0}</span>`;
+        html += `</div>`;
+
+        // Warnings
+        if (lastInspection.warnings?.length > 0) {
+            html += `<div style="margin-top: 0.5rem; padding: 0.3rem 0.5rem; background: rgba(210, 153, 34, 0.1); border-radius: 3px;">`;
+            for (const warn of lastInspection.warnings) {
+                html += `<div style="color: var(--yellow); font-size: 0.65rem;">⚠ ${warn}</div>`;
+            }
+            html += `</div>`;
+        }
+
+        // Missing for next level
+        if (lastCapabilities.missing_for_next_level?.length > 0) {
+            html += `<div style="margin-top: 0.5rem; padding: 0.3rem 0.5rem; background: rgba(88, 166, 255, 0.1); border-radius: 3px;">`;
+            html += `<div style="color: var(--accent); font-size: 0.65rem;">To unlock more:</div>`;
+            for (const tip of lastCapabilities.missing_for_next_level) {
+                html += `<div style="color: var(--dim); font-size: 0.65rem;">• ${tip}</div>`;
+            }
+            html += `</div>`;
+        }
+
+        $('inspection-content').innerHTML = html;
+
+    } catch (e) {
+        console.warn('Inspection error:', e);
+    }
+}
+
+// =====================================================================
+// RESULTS VALIDATION
+// =====================================================================
+
+async function validateResults() {
+    try {
+        const r = await fetch('/api/validate-results', { method: 'POST' });
+        if (!r.ok) return null;
+        return await r.json();
+    } catch (e) {
+        console.warn('Validation error:', e);
+        return null;
+    }
+}
+
+function showValidationWarnings(validation) {
+    if (!validation) return;
+
+    let messages = [];
+
+    if (validation.files_corrupted?.length > 0) {
+        messages.push(`❌ Corrupted: ${validation.files_corrupted.join(', ')}`);
+    }
+    if (validation.files_empty?.length > 0) {
+        messages.push(`⚠️ Empty: ${validation.files_empty.join(', ')}`);
+    }
+
+    if (messages.length > 0) {
+        alert('Results Validation:\n\n' + messages.join('\n') + '\n\n' + validation.summary);
+    }
+}
+
+// =====================================================================
+// PRISM CONNECTIVITY
+// =====================================================================
+
+let prismAvailable = false;
+
+async function checkPRISM() {
+    try {
+        const r = await fetch('/api/prism/health');
+        const data = await r.json();
+        prismAvailable = data.available;
+
+        if (prismAvailable) {
+            $('prism-status').innerHTML = '<span style="color: var(--green)">✓ PRISM Connected</span>';
+            setSt('prism', `v${data.version || '?'}`, 'ok');
+            updateAnalyzeButton();
+        } else {
+            $('prism-status').innerHTML = '<span style="color: var(--yellow)">⚠ PRISM Offline</span>';
+            setSt('prism', 'Offline', 'warn');
+        }
+    } catch (e) {
+        // If API not available, try direct PRISM connection
+        try {
+            const r = await fetch('http://localhost:8100/health');
+            const data = await r.json();
+            prismAvailable = data.status === 'ok';
+
+            if (prismAvailable) {
+                $('prism-status').innerHTML = '<span style="color: var(--green)">✓ PRISM Direct</span>';
+                setSt('prism', 'Direct', 'ok');
+                updateAnalyzeButton();
+            }
+        } catch (e2) {
+            $('prism-status').innerHTML = '<span style="color: var(--red)">✗ PRISM Unavailable</span>';
+            setSt('prism', 'Unavailable', 'err');
+        }
+    }
+}
+
+function updateAnalyzeButton() {
+    const btn = $('analyze-btn');
+    btn.disabled = !(prismAvailable && currentFile);
+}
+
+window.analyzeWithPRISM = async function() {
+    if (!currentFile || !prismAvailable) return;
+
+    const btn = $('analyze-btn');
+    const progress = $('prism-progress');
+    const progressText = $('prism-progress-text');
+
+    btn.disabled = true;
+    progress.style.display = 'block';
+    progressText.textContent = 'Uploading to PRISM...';
+
+    try {
+        const formData = new FormData();
+        formData.append('file', currentFile);
+        formData.append('discipline', $('discipline-select').value);
+        formData.append('window_size', $('window-size').value);
+        formData.append('window_stride', $('window-stride').value);
+
+        // Add user-entered constants
+        const constants = getUserConstants();
+        if (Object.keys(constants).length > 0) {
+            formData.append('constants', JSON.stringify(constants));
+        }
+
+        progressText.textContent = 'Computing...';
+
+        const r = await fetch('/api/prism/compute', {
+            method: 'POST',
+            body: formData,
+        });
+
+        const result = await r.json();
+
+        if (!r.ok) {
+            throw new Error(result.detail || 'PRISM computation failed');
+        }
+
+        progressText.textContent = 'Loading results...';
+
+        // Load result parquets into DuckDB
+        const tableSelect = $('table-select');
+        tableSelect.innerHTML = '<option value="data">data (original)</option>';
+
+        for (const url of result.parquet_urls || []) {
+            const tableName = url.split('/').pop().replace('.parquet', '');
+
+            try {
+                // Fetch the parquet file
+                const parquetResponse = await fetch(url);
+                const parquetBuffer = await parquetResponse.arrayBuffer();
+                const filename = `${tableName}.parquet`;
+
+                // Register in DuckDB
+                await db.registerFileBuffer(filename, new Uint8Array(parquetBuffer));
+                await conn.query(`CREATE OR REPLACE TABLE ${tableName} AS SELECT * FROM read_parquet('${filename}')`);
+
+                // Add to table selector
+                const option = document.createElement('option');
+                option.value = tableName;
+                option.textContent = tableName;
+                tableSelect.appendChild(option);
+
+            } catch (e) {
+                console.warn(`Failed to load ${tableName}:`, e);
+            }
+        }
+
+        progress.style.display = 'none';
+        setSt('prism', `Done: ${result.parquets?.length || 0} tables`, 'ok');
+
+        // Store URLs and show download button
+        lastParquetUrls = result.parquet_urls || [];
+        if (lastParquetUrls.length > 0) {
+            $('download-section').style.display = 'block';
+        }
+
+        // Show first result table
+        if (result.parquets?.length > 0) {
+            const firstTable = result.parquets[0].replace('.parquet', '');
+            tableSelect.value = firstTable;
+            await loadTable(firstTable);
+            await loadSchema();
+        }
+
+        // Validate results
+        progressText.textContent = 'Validating results...';
+        const validation = await validateResults();
+
+        if (validation && (!validation.valid || validation.warnings?.length > 0)) {
+            showValidationWarnings(validation);
+        } else {
+            alert(`PRISM analysis complete!\n\n${validation?.summary || `Loaded ${result.parquets?.length || 0} tables`}`);
+        }
+
+    } catch (e) {
+        console.error('PRISM error:', e);
+        progress.style.display = 'none';
+        setSt('prism', 'Error', 'err');
+        alert('PRISM Error: ' + e.message);
+    } finally {
+        btn.disabled = false;
+        updateAnalyzeButton();
+    }
+};
+
+// =====================================================================
+// DOWNLOAD RESULTS
+// =====================================================================
+
+let lastParquetUrls = [];
+
+window.downloadResults = async function() {
+    if (lastParquetUrls.length === 0) return;
+
+    // Download each parquet file
+    for (const url of lastParquetUrls) {
+        const filename = url.split('/').pop();
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        await new Promise(r => setTimeout(r, 300)); // Small delay between downloads
+    }
+};
+
+// =====================================================================
+// CONSTANTS PANEL
+// =====================================================================
+
+window.toggleConstants = function() {
+    const panel = $('constants-panel');
+    const toggle = $('constants-toggle');
+
+    if (panel.style.display === 'none') {
+        panel.style.display = 'block';
+        toggle.textContent = '− Hide Constants';
+    } else {
+        panel.style.display = 'none';
+        toggle.textContent = '+ Add Constants';
+    }
+};
+
+function getUserConstants() {
+    const constants = {};
+
+    const density = $('const-density').value;
+    const viscosity = $('const-viscosity').value;
+    const diameter = $('const-diameter').value;
+    const length = $('const-length').value;
+    const temperature = $('const-temperature').value;
+    const pressure = $('const-pressure').value;
+
+    if (density) constants.density_kg_m3 = parseFloat(density);
+    if (viscosity) constants.viscosity_Pa_s = parseFloat(viscosity);
+    if (diameter) constants.diameter_m = parseFloat(diameter);
+    if (length) constants.pipe_length_m = parseFloat(length);
+    if (temperature) constants.temperature_K = parseFloat(temperature);
+    if (pressure) constants.pressure_Pa = parseFloat(pressure);
+
+    return constants;
+};
+
+// =====================================================================
+// PRESET QUERIES
+// =====================================================================
+
+function populateQueryDropdown() {
+    if (typeof ORTHON_QUERIES === 'undefined') {
+        console.warn('ORTHON_QUERIES not loaded');
+        return;
+    }
+
+    const select = $('query-select');
+
+    for (const [sectionKey, section] of Object.entries(ORTHON_QUERIES)) {
+        const group = document.createElement('optgroup');
+        group.label = section.label;
+
+        for (const query of section.queries) {
+            const option = document.createElement('option');
+            option.value = query.id;
+            option.textContent = query.name;
+            option.title = query.description;
+            group.appendChild(option);
+        }
+
+        select.appendChild(group);
+    }
+}
+
+window.loadPresetQuery = function(queryId) {
+    if (!queryId) {
+        $('query-input').value = 'SELECT * FROM data LIMIT 100';
+        return;
+    }
+
+    // Find the query
+    let selectedQuery = null;
+    for (const section of Object.values(ORTHON_QUERIES)) {
+        selectedQuery = section.queries.find(q => q.id === queryId);
+        if (selectedQuery) break;
+    }
+
+    if (selectedQuery) {
+        $('query-input').value = selectedQuery.sql.trim();
+    }
+};
+
+// =====================================================================
+// CONFIG TAB
+// =====================================================================
+
+const CONFIG_STORAGE_KEY = 'orthon_config';
+
+const EXAMPLE_CONFIG = {
+    index: {
+        column: "timestamp",
+        type: "temporal",
+        unit: "seconds",
+        monotonic: "increasing"
+    },
+    windows: {
+        size: 100,
+        stride: 50,
+        min_observations: 10,
+        boundary: "truncate"
+    },
+    signals: [
+        { column: "signal_1", type: "continuous" },
+        { column: "signal_2", type: "continuous" }
+    ],
+    layers: {
+        typology: true,
+        geometry: true,
+        dynamics: true,
+        mechanics: true
+    },
+    engines: {
+        core: ["hurst", "entropy", "lyapunov", "trend", "stationarity"],
+        domain: []
+    }
+};
+
+const CONFIG_REQUIRED_FIELDS = [
+    'index.column',
+    'index.type',
+    'index.unit',
+    'windows.size',
+    'windows.stride'
+];
+
+function initConfigTab() {
+    const editor = $('config-editor');
+    const fileInput = $('config-file-input');
+    const saveBtn = $('config-save');
+    const resetBtn = $('config-reset');
+
+    // Load saved config or example
+    const saved = localStorage.getItem(CONFIG_STORAGE_KEY);
+    if (saved) {
+        editor.value = saved;
+    } else {
+        editor.value = JSON.stringify(EXAMPLE_CONFIG, null, 2);
+    }
+
+    // Validate on load and check capabilities
+    validateConfigEditor(editor.value);
+    checkCapabilities();
+
+    // Event listeners
+    editor.addEventListener('input', () => {
+        validateConfigEditor(editor.value);
+        checkCapabilities();
+    });
+
+    fileInput.addEventListener('change', handleConfigFileLoad);
+    saveBtn.addEventListener('click', handleConfigSave);
+    resetBtn.addEventListener('click', handleConfigReset);
+}
+
+function handleConfigFileLoad(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+        const content = event.target.result;
+        let config;
+
+        try {
+            if (file.name.endsWith('.yaml') || file.name.endsWith('.yml')) {
+                // Simple YAML to JSON conversion for basic configs
+                config = parseSimpleYAML(content);
+            } else {
+                config = JSON.parse(content);
+            }
+
+            const editor = $('config-editor');
+            editor.value = JSON.stringify(config, null, 2);
+            validateConfigEditor(editor.value);
+            checkCapabilities();
+            showConfigValidation('Loaded: ' + file.name, 'valid');
+
+        } catch (err) {
+            showConfigValidation('Parse error: ' + err.message, 'invalid');
+        }
+    };
+
+    reader.readAsText(file);
+    e.target.value = ''; // Reset for same file reload
+}
+
+function parseSimpleYAML(text) {
+    // Simple YAML parser for basic key:value and arrays
+    const result = {};
+    const lines = text.split('\n');
+    let currentKey = null;
+    let currentArray = null;
+
+    for (const line of lines) {
+        if (line.trim().startsWith('#') || !line.trim()) continue;
+
+        // Array item
+        if (line.match(/^\s+-\s+/)) {
+            const itemMatch = line.match(/^\s+-\s+(.+)/);
+            if (itemMatch && currentArray) {
+                const item = itemMatch[1].trim();
+                // Check if it's a key:value or just a value
+                if (item.includes(':')) {
+                    const obj = {};
+                    const pairs = item.split(/,\s*/);
+                    for (const pair of pairs) {
+                        const [k, v] = pair.split(':').map(s => s.trim());
+                        obj[k] = isNaN(v) ? v : Number(v);
+                    }
+                    currentArray.push(obj);
+                } else {
+                    currentArray.push(isNaN(item) ? item : Number(item));
+                }
+            }
+            continue;
+        }
+
+        // Key: value or Key:
+        const match = line.match(/^(\s*)(\w+):\s*(.*)$/);
+        if (match) {
+            const [, indent, key, value] = match;
+            const depth = indent.length;
+
+            if (value) {
+                // Simple key: value
+                if (depth === 0) {
+                    result[key] = isNaN(value) ? (value === 'true' ? true : value === 'false' ? false : value) : Number(value);
+                } else if (currentKey && typeof result[currentKey] === 'object' && !Array.isArray(result[currentKey])) {
+                    result[currentKey][key] = isNaN(value) ? (value === 'true' ? true : value === 'false' ? false : value) : Number(value);
+                }
+            } else {
+                // Object or array start
+                if (depth === 0) {
+                    currentKey = key;
+                    result[key] = {};
+                    currentArray = null;
+                } else if (currentKey) {
+                    result[currentKey][key] = [];
+                    currentArray = result[currentKey][key];
+                }
+            }
+        }
+    }
+
+    return result;
+}
+
+function handleConfigSave() {
+    const editor = $('config-editor');
+    const content = editor.value;
+
+    const validation = validateConfigEditor(content);
+
+    if (validation.valid) {
+        localStorage.setItem(CONFIG_STORAGE_KEY, content);
+        showConfigValidation('Config saved', 'valid');
+        setSt('cfg', 'Saved', 'ok');
+    } else {
+        localStorage.setItem(CONFIG_STORAGE_KEY, content);
+        showConfigValidation('Saved with warnings: ' + validation.errors.join(', '), 'warning');
+        setSt('cfg', 'Saved (warnings)', 'warn');
+    }
+}
+
+function handleConfigReset() {
+    if (confirm('Reset config to example? Your changes will be lost.')) {
+        const editor = $('config-editor');
+        editor.value = JSON.stringify(EXAMPLE_CONFIG, null, 2);
+        localStorage.removeItem(CONFIG_STORAGE_KEY);
+        validateConfigEditor(editor.value);
+        checkCapabilities();
+        showConfigValidation('Reset to example config', 'valid');
+        setSt('cfg', 'Example', 'ok');
+    }
+}
+
+function validateConfigEditor(content) {
+    const result = { valid: true, errors: [], warnings: [] };
+
+    let config;
+    try {
+        config = JSON.parse(content);
+    } catch (err) {
+        result.valid = false;
+        result.errors.push('Invalid JSON: ' + err.message);
+        showConfigValidation(result.errors[0], 'invalid');
+        setSt('cfg', 'Invalid JSON', 'err');
+        return result;
+    }
+
+    // Check required fields
+    for (const field of CONFIG_REQUIRED_FIELDS) {
+        const value = getNestedValue(config, field);
+        if (value === undefined || value === null || value === '') {
+            result.valid = false;
+            result.errors.push(field);
+        }
+    }
+
+    // Check valid enum values
+    const validTypes = ['temporal', 'spatial', 'ordinal', 'spectral', 'continuous'];
+    if (config.index?.type && !validTypes.includes(config.index.type)) {
+        result.warnings.push('index.type should be: ' + validTypes.join(', '));
+    }
+
+    const validMonotonic = ['increasing', 'decreasing', 'none'];
+    if (config.index?.monotonic && !validMonotonic.includes(config.index.monotonic)) {
+        result.warnings.push('index.monotonic should be: ' + validMonotonic.join(', '));
+    }
+
+    const validBoundary = ['truncate', 'pad', 'error'];
+    if (config.windows?.boundary && !validBoundary.includes(config.windows.boundary)) {
+        result.warnings.push('windows.boundary should be: ' + validBoundary.join(', '));
+    }
+
+    // Check logical constraints
+    if (config.windows?.stride > config.windows?.size) {
+        result.warnings.push('stride > size creates gaps');
+    }
+
+    // Display result
+    if (result.errors.length > 0) {
+        showConfigValidation('Missing required: ' + result.errors.join(', '), 'invalid');
+        setSt('cfg', 'Missing fields', 'err');
+    } else if (result.warnings.length > 0) {
+        showConfigValidation('Warnings: ' + result.warnings.join('; '), 'warning');
+        setSt('cfg', 'Valid (warnings)', 'warn');
+    } else {
+        showConfigValidation('Config valid', 'valid');
+        setSt('cfg', 'Valid', 'ok');
+    }
+
+    return result;
+}
+
+function getNestedValue(obj, path) {
+    return path.split('.').reduce((o, k) => (o || {})[k], obj);
+}
+
+function showConfigValidation(message, type) {
+    const el = $('config-validation');
+    const icon = type === 'valid' ? '✓' : type === 'warning' ? '⚠' : '✗';
+    el.textContent = icon + ' ' + message;
+    el.className = 'validation-message ' + type;
+}
+
+function getConfig() {
+    const editor = $('config-editor');
+    try {
+        return JSON.parse(editor.value);
+    } catch {
+        return null;
+    }
+}
+
+// Export for PRISM integration
+window.orthonConfig = {
+    get: getConfig,
+    validate: validateConfigEditor
+};
+
 // Init
 setSt('cfg', '—', '');
 setSt('data', '—', '');
+setSt('prism', 'Checking...', '');
 initDuckDB();
+checkPRISM();
+populateQueryDropdown();
+initConfigTab();
 </script>
 </body>
 </html>
