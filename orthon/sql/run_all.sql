@@ -64,6 +64,22 @@ SELECT * FROM v_optimal_lag LIMIT 20;
 SELECT '=== REGIME SUMMARY ===' AS section;
 SELECT * FROM v_regime_summary WHERE regime_id > 1 OR signal_id LIKE '%regime%';
 
+-- 06: Causal Mechanics
+.read sql/06_causal_mechanics/001_lead_lag.sql
+.read sql/06_causal_mechanics/002_role_assignment.sql
+.read sql/06_causal_mechanics/003_causal_chain.sql
+
+SELECT '=== CAUSAL ROLES ===' AS section;
+SELECT signal_id, signal_class, causal_role, n_leads, n_led_by, influence_score
+FROM v_causal_roles ORDER BY influence_score DESC;
+
+SELECT '=== CAUSAL CHAINS (strongest) ===' AS section;
+SELECT source, target, hops, path, chain_strength, chain_lag
+FROM v_causal_chains LIMIT 10;
+
+SELECT '=== CAUSAL SUMMARY ===' AS section;
+SELECT * FROM v_causal_summary;
+
 -- ============================================================================
 -- VALIDATION
 -- ============================================================================
