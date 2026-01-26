@@ -1,93 +1,83 @@
 -- ============================================================================
--- ORTHON SQL Engine: run_all.sql
+-- ORTHON SQL: run_all.sql
 -- ============================================================================
--- Execute all SQL engines in order
--- Run from orthon/ directory: duckdb < sql/run_all.sql
--- ============================================================================
-
--- Load data
-.read sql/00_load.sql
-
--- ============================================================================
--- PASS 1: Foundation (before PRISM)
--- ============================================================================
-
--- 01: Calculus
-.read sql/01_calculus/001_first_derivative.sql
-.read sql/01_calculus/002_second_derivative.sql
-.read sql/01_calculus/003_curvature.sql
-
--- 02: Signal Classification
-.read sql/02_signal_class/001_from_units.sql
-.read sql/02_signal_class/002_from_data.sql
-.read sql/02_signal_class/003_classify.sql
-.read sql/02_signal_class/004_prism_requests.sql
-
-SELECT '=== PASS 1: SIGNAL CLASSIFICATION ===' AS section;
-SELECT signal_id, value_unit, signal_class, interpolation_valid, class_source
-FROM v_signal_class ORDER BY signal_id;
-
-SELECT '=== PRISM WORK ORDERS ===' AS section;
-SELECT signal_id, signal_class, needs_hurst, needs_fft, needs_lyapunov
-FROM v_prism_requests ORDER BY priority DESC, signal_id;
-
-SELECT '=== PRISM REQUEST SUMMARY ===' AS section;
-SELECT * FROM v_prism_request_summary;
-
--- ============================================================================
--- PASS 2: Analysis (uses PRISM results if available)
+-- Main entry point for ORTHON SQL execution
+--
+-- ORTHON's role:
+--   1. Load observations → observations.parquet (ONLY file ORTHON creates)
+--   2. Classify by units → work orders for PRISM
+--   3. Load PRISM results → visualization views
+--
+-- ORTHON does NOT compute. PRISM computes everything.
 -- ============================================================================
 
--- 03: Signal Typology
-.read sql/03_signal_typology/001_persistence.sql
-.read sql/03_signal_typology/002_periodicity.sql
-.read sql/03_signal_typology/003_stationarity.sql
-.read sql/03_signal_typology/004_classify.sql
+-- =========================================================================
+-- PHASE 1: OBSERVATIONS (run on upload)
+-- =========================================================================
+-- Creates observations.parquet from uploaded data
+-- Parameters: {input_path}, {output_path}
 
-SELECT '=== PASS 2: SIGNAL TYPOLOGY ===' AS section;
-SELECT signal_id, signal_class, behavioral_class, stationarity_class, behavioral_profile
-FROM v_signal_typology ORDER BY signal_id;
+.read sql/00_observations.sql
 
--- 04: Behavioral Geometry
-.read sql/04_behavioral_geometry/001_correlation.sql
-.read sql/04_behavioral_geometry/002_lagged_correlation.sql
+-- =========================================================================
+-- PHASE 2: CLASSIFICATION (run after observations)
+-- =========================================================================
+-- Classifies signals by UNIT only (no compute)
+-- Generates PRISM work orders
 
-SELECT '=== CORRELATION MATRIX (strong only) ===' AS section;
-SELECT * FROM v_strong_correlations LIMIT 20;
+.read sql/01_classification_units.sql
+.read sql/02_work_orders.sql
 
-SELECT '=== LEAD/LAG RELATIONSHIPS ===' AS section;
-SELECT * FROM v_optimal_lag LIMIT 20;
+SELECT '=== ORTHON: SIGNAL CLASSIFICATION (by unit) ===' AS section;
+SELECT * FROM v_signal_class_summary;
 
--- 05: Dynamical Systems
-.read sql/05_dynamical_systems/001_regime_detection.sql
+SELECT '=== ORTHON: PRISM WORK ORDERS ===' AS section;
+SELECT * FROM v_work_order_summary;
 
-SELECT '=== REGIME SUMMARY ===' AS section;
-SELECT * FROM v_regime_summary WHERE regime_id > 1 OR signal_id LIKE '%regime%';
+-- At this point, ORTHON sends work orders to PRISM and waits.
+-- PRISM creates: signal_typology.parquet, behavioral_geometry.parquet,
+--                dynamical_systems.parquet, causal_mechanics.parquet
 
--- 06: Causal Mechanics
-.read sql/06_causal_mechanics/001_lead_lag.sql
-.read sql/06_causal_mechanics/002_role_assignment.sql
-.read sql/06_causal_mechanics/003_causal_chain.sql
+-- =========================================================================
+-- PHASE 3: VISUALIZATION (run after PRISM completes)
+-- =========================================================================
+-- Load PRISM results and create visualization views
+-- Parameters: {prism_output}
 
-SELECT '=== CAUSAL ROLES ===' AS section;
-SELECT signal_id, signal_class, causal_role, n_leads, n_led_by, influence_score
-FROM v_causal_roles ORDER BY influence_score DESC;
+.read sql/03_load_prism_results.sql
+.read sql/04_visualization.sql
+.read sql/05_summaries.sql
 
-SELECT '=== CAUSAL CHAINS (strongest) ===' AS section;
-SELECT source, target, hops, path, chain_strength, chain_lag
-FROM v_causal_chains LIMIT 10;
+SELECT '=== ORTHON: PRISM RESULTS LOADED ===' AS section;
+SELECT * FROM v_summary_all_layers;
 
-SELECT '=== CAUSAL SUMMARY ===' AS section;
-SELECT * FROM v_causal_summary;
+SELECT '=== ORTHON: SYSTEM HEALTH ===' AS section;
+SELECT * FROM v_dashboard_system_health;
 
--- ============================================================================
--- VALIDATION
--- ============================================================================
+SELECT '=== ORTHON: ALERTS ===' AS section;
+SELECT * FROM v_dashboard_alerts LIMIT 10;
 
-SELECT '=== VALIDATION SUMMARY ===' AS section;
+-- =========================================================================
+-- VERIFY
+-- =========================================================================
+SELECT '=== ORTHON SQL Complete ===' AS status;
+
 SELECT
-    (SELECT COUNT(*) FROM v_signal_class) AS total_signals,
-    (SELECT COUNT(*) FROM v_signal_class WHERE signal_class = 'analog') AS analog,
-    (SELECT COUNT(*) FROM v_signal_class WHERE signal_class = 'periodic') AS periodic,
-    (SELECT COUNT(*) FROM v_signal_class WHERE signal_class = 'digital') AS digital,
-    (SELECT COUNT(*) FROM v_signal_class WHERE signal_class = 'event') AS event;
+    'observations' AS table_name,
+    (SELECT COUNT(*) FROM observations) AS row_count
+UNION ALL
+SELECT
+    'signal_typology',
+    (SELECT COUNT(*) FROM signal_typology)
+UNION ALL
+SELECT
+    'behavioral_geometry',
+    (SELECT COUNT(*) FROM behavioral_geometry)
+UNION ALL
+SELECT
+    'dynamical_systems',
+    (SELECT COUNT(*) FROM dynamical_systems)
+UNION ALL
+SELECT
+    'causal_mechanics',
+    (SELECT COUNT(*) FROM causal_mechanics);

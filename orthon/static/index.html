@@ -638,6 +638,115 @@
         .readme-content th {
             background: var(--input);
         }
+
+        /* Concierge Styles */
+        .concierge-section {
+            background: linear-gradient(135deg, rgba(88, 166, 255, 0.05), rgba(188, 140, 255, 0.05));
+            border-left: 2px solid var(--purple);
+        }
+
+        .concierge-panel {
+            padding: 0.5rem;
+            background: var(--input);
+            border-radius: 4px;
+            margin-bottom: 0.5rem;
+        }
+
+        .concierge-report {
+            max-height: 300px;
+            overflow-y: auto;
+            font-size: 0.7rem;
+            line-height: 1.5;
+        }
+
+        .concierge-report h2 { font-size: 0.8rem; margin: 0.5rem 0 0.3rem 0; color: var(--accent); }
+        .concierge-report h3 { font-size: 0.75rem; margin: 0.4rem 0 0.2rem 0; color: var(--text); }
+        .concierge-report p { margin: 0.3rem 0; }
+        .concierge-report ul { margin: 0.2rem 0; padding-left: 1rem; }
+        .concierge-report li { margin: 0.1rem 0; }
+        .concierge-report code { background: var(--bg); padding: 0.1rem 0.3rem; border-radius: 2px; }
+        .concierge-report pre { background: var(--bg); padding: 0.5rem; border-radius: 4px; overflow-x: auto; margin: 0.3rem 0; }
+
+        .concierge-chat {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .chat-messages {
+            max-height: 200px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 0.3rem;
+        }
+
+        .chat-message {
+            padding: 0.4rem 0.6rem;
+            border-radius: 4px;
+            font-size: 0.7rem;
+            line-height: 1.4;
+        }
+
+        .chat-message.user {
+            background: var(--accent);
+            color: var(--bg);
+            align-self: flex-end;
+            max-width: 85%;
+        }
+
+        .chat-message.assistant {
+            background: var(--input);
+            color: var(--text);
+            align-self: flex-start;
+            max-width: 90%;
+        }
+
+        .chat-input-row {
+            display: flex;
+            gap: 0.3rem;
+        }
+
+        .chat-input {
+            flex: 1;
+            background: var(--input);
+            border: 1px solid var(--border);
+            color: var(--text);
+            padding: 0.4rem 0.5rem;
+            border-radius: 4px;
+            font: inherit;
+            font-size: 0.75rem;
+        }
+
+        .chat-input:focus {
+            outline: none;
+            border-color: var(--purple);
+        }
+
+        .concierge-loading {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            color: var(--purple);
+            font-size: 0.7rem;
+        }
+
+        .confidence-bar {
+            height: 4px;
+            background: var(--border);
+            border-radius: 2px;
+            overflow: hidden;
+            margin-top: 0.3rem;
+        }
+
+        .confidence-fill {
+            height: 100%;
+            background: var(--green);
+            transition: width 0.3s;
+        }
+
+        .confidence-fill.medium { background: var(--yellow); }
+        .confidence-fill.low { background: var(--red); }
     </style>
 </head>
 <body>
@@ -787,6 +896,55 @@
                     <div class="cap-list" id="caps"></div>
                 </div>
             </div>
+
+            <!-- AI Concierge -->
+            <div class="sidebar-section concierge-section" id="concierge-section" style="display: none;">
+                <div class="section-title collapsible" onclick="toggleSection(this)">
+                    <span><span class="toggle-icon">▼</span> AI Concierge</span>
+                    <span id="concierge-badge" style="font-size: 0.6rem; padding: 0.1rem 0.3rem; background: var(--purple); color: var(--bg); border-radius: 3px;">AI</span>
+                </div>
+                <div class="section-content">
+                    <!-- Validation Report -->
+                    <div id="concierge-validation-panel" class="concierge-panel" style="display: none;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.3rem;">
+                            <span style="font-size: 0.65rem; color: var(--dim); text-transform: uppercase;">Data Analysis</span>
+                            <span id="concierge-confidence" style="font-size: 0.6rem; color: var(--green);"></span>
+                        </div>
+                        <div class="confidence-bar">
+                            <div id="confidence-fill" class="confidence-fill" style="width: 0%;"></div>
+                        </div>
+                        <div id="concierge-report" class="concierge-report" style="margin-top: 0.5rem;"></div>
+                    </div>
+
+                    <!-- Suggested Config -->
+                    <div id="concierge-config-panel" style="display: none; margin-bottom: 0.5rem;">
+                        <button class="btn btn-sm" onclick="applyConciergeConfig()" style="width: 100%;">Apply Suggested Config</button>
+                    </div>
+
+                    <!-- Loading State -->
+                    <div id="concierge-loading" class="concierge-loading" style="display: none;">
+                        <div class="spinner"></div>
+                        <span>Analyzing data...</span>
+                    </div>
+
+                    <!-- Chat Interface -->
+                    <div id="concierge-chat" class="concierge-chat" style="display: none;">
+                        <div style="font-size: 0.65rem; color: var(--dim); text-transform: uppercase; margin-bottom: 0.2rem;">Ask about your data</div>
+                        <div id="chat-messages" class="chat-messages"></div>
+                        <div class="chat-input-row">
+                            <input type="text" id="chat-input" class="chat-input" placeholder="What patterns do you see?" onkeypress="if(event.key==='Enter') askConcierge()">
+                            <button class="btn btn-sm" onclick="askConcierge()">Ask</button>
+                        </div>
+                        <button class="btn btn-sm" onclick="interpretResults()" style="margin-top: 0.3rem; width: 100%; background: rgba(188, 140, 255, 0.15); border-color: var(--purple); color: var(--purple);">Interpret Analysis Results</button>
+                    </div>
+
+                    <!-- No API Key Message -->
+                    <div id="concierge-unavailable" style="font-size: 0.7rem; color: var(--dim);">
+                        <span>AI assistance unavailable</span>
+                        <div style="margin-top: 0.3rem; font-size: 0.65rem;">Set ANTHROPIC_API_KEY to enable</div>
+                    </div>
+                </div>
+            </div>
         </div>
 
         <div class="content">
@@ -902,6 +1060,11 @@
             <div class="st-dot" id="db-dot"></div>
             <span class="st-label">DuckDB:</span>
             <span id="db-st">Loading...</span>
+        </div>
+        <div class="st">
+            <div class="st-dot" id="concierge-dot"></div>
+            <span class="st-label">AI:</span>
+            <span id="concierge-st">—</span>
         </div>
         <div class="level-bar">
             <span class="st-label">Level:</span>
@@ -1680,6 +1843,11 @@ async function inspectFile(file) {
         }
 
         $('inspection-content').innerHTML = html;
+
+        // Trigger AI concierge validation
+        if (conciergeAvailable) {
+            validateWithConcierge(file);
+        }
 
     } catch (e) {
         console.warn('Inspection error:', e);
@@ -2634,12 +2802,284 @@ window.orthonConfig = {
     validate: validateConfigEditor
 };
 
+// =====================================================================
+// AI CONCIERGE
+// =====================================================================
+
+let conciergeAvailable = false;
+let lastConciergeConfig = null;
+let chatHistory = [];
+
+async function checkConcierge() {
+    try {
+        const r = await fetch('/api/concierge/status');
+        const data = await r.json();
+        conciergeAvailable = data.available;
+
+        if (conciergeAvailable) {
+            setSt('concierge', 'Ready', 'ok');
+            $('concierge-section').style.display = 'block';
+            $('concierge-unavailable').style.display = 'none';
+        } else {
+            setSt('concierge', 'No API Key', 'warn');
+            $('concierge-section').style.display = 'block';
+            $('concierge-unavailable').style.display = 'block';
+            $('concierge-chat').style.display = 'none';
+        }
+    } catch (e) {
+        setSt('concierge', 'Unavailable', 'err');
+        $('concierge-section').style.display = 'none';
+    }
+}
+
+async function validateWithConcierge(file) {
+    if (!conciergeAvailable) return;
+
+    $('concierge-loading').style.display = 'flex';
+    $('concierge-validation-panel').style.display = 'none';
+    $('concierge-config-panel').style.display = 'none';
+    setSt('concierge', 'Analyzing...', 'warn');
+
+    try {
+        const formData = new FormData();
+        formData.append('file', file);
+
+        const r = await fetch('/api/concierge/validate', {
+            method: 'POST',
+            body: formData,
+        });
+
+        if (!r.ok) {
+            throw new Error('Validation failed');
+        }
+
+        const data = await r.json();
+
+        // Display validation report
+        $('concierge-loading').style.display = 'none';
+        $('concierge-validation-panel').style.display = 'block';
+
+        // Render the markdown report
+        const reportHtml = renderMarkdown(data.report || 'No analysis available');
+        $('concierge-report').innerHTML = reportHtml;
+
+        // Show confidence
+        const confidence = data.confidence || 0;
+        const confidencePct = Math.round(confidence * 100);
+        $('concierge-confidence').textContent = `${confidencePct}% confidence`;
+
+        const fill = $('confidence-fill');
+        fill.style.width = `${confidencePct}%`;
+        fill.className = 'confidence-fill' + (confidence < 0.5 ? ' low' : confidence < 0.8 ? ' medium' : '');
+
+        // Store suggested config
+        if (data.config && Object.keys(data.config).length > 0) {
+            lastConciergeConfig = data.config;
+            $('concierge-config-panel').style.display = 'block';
+        }
+
+        // Show chat interface
+        $('concierge-chat').style.display = 'flex';
+
+        setSt('concierge', 'Ready', 'ok');
+
+    } catch (e) {
+        console.warn('Concierge validation error:', e);
+        $('concierge-loading').style.display = 'none';
+        setSt('concierge', 'Error', 'err');
+    }
+}
+
+window.applyConciergeConfig = function() {
+    if (!lastConciergeConfig) return;
+
+    // Build a config from the concierge suggestion
+    const suggestion = lastConciergeConfig;
+    const currentConfig = getConfig() || EXAMPLE_CONFIG;
+
+    // Apply index settings
+    if (suggestion.index_column) {
+        currentConfig.index = currentConfig.index || {};
+        currentConfig.index.column = suggestion.index_column;
+    }
+    if (suggestion.index_dimension) {
+        currentConfig.index = currentConfig.index || {};
+        const typeMap = { 'time': 'temporal', 'space': 'spatial', 'frequency': 'spectral', 'scale': 'ordinal' };
+        currentConfig.index.type = typeMap[suggestion.index_dimension] || 'temporal';
+    }
+
+    // Apply signal settings
+    if (suggestion.columns) {
+        currentConfig.signals = [];
+        for (const [colName, colConfig] of Object.entries(suggestion.columns)) {
+            if (colName !== suggestion.index_column) {
+                currentConfig.signals.push({
+                    column: colName,
+                    type: colConfig.signal_class || 'continuous',
+                    unit: colConfig.unit,
+                    physical_quantity: colConfig.quantity
+                });
+            }
+        }
+    }
+
+    // Update the config editor
+    $('config-editor').value = JSON.stringify(currentConfig, null, 2);
+    validateConfigEditor($('config-editor').value);
+    checkCapabilities();
+
+    // Show confirmation
+    showConfigValidation('Applied AI-suggested config', 'valid');
+    setSt('cfg', 'AI Config', 'ok');
+
+    // Switch to config tab
+    showView('config');
+};
+
+window.askConcierge = async function() {
+    if (!conciergeAvailable) return;
+
+    const input = $('chat-input');
+    const question = input.value.trim();
+    if (!question) return;
+
+    // Clear input
+    input.value = '';
+
+    // Add user message to chat
+    const messagesDiv = $('chat-messages');
+    messagesDiv.innerHTML += `<div class="chat-message user">${escapeHtml(question)}</div>`;
+    messagesDiv.scrollTop = messagesDiv.scrollHeight;
+
+    // Add loading indicator
+    const loadingId = 'chat-loading-' + Date.now();
+    messagesDiv.innerHTML += `<div id="${loadingId}" class="chat-message assistant" style="color: var(--dim);">Thinking...</div>`;
+    messagesDiv.scrollTop = messagesDiv.scrollHeight;
+
+    try {
+        // Build context from inspection and results
+        const signalSummaries = lastInspection?.signals || [];
+
+        // Use FormData for the API
+        const formData = new FormData();
+        formData.append('question', question);
+        formData.append('signals', JSON.stringify(signalSummaries));
+        formData.append('history', JSON.stringify(chatHistory));
+
+        const r = await fetch('/api/concierge/ask', {
+            method: 'POST',
+            body: formData
+        });
+
+        const data = await r.json();
+
+        // Remove loading indicator
+        const loadingEl = document.getElementById(loadingId);
+        if (loadingEl) loadingEl.remove();
+
+        // Add assistant response
+        const answerHtml = renderMarkdown(data.answer || 'I could not find an answer.');
+        messagesDiv.innerHTML += `<div class="chat-message assistant">${answerHtml}</div>`;
+        messagesDiv.scrollTop = messagesDiv.scrollHeight;
+
+        // Update history
+        chatHistory.push({ role: 'user', content: question });
+        chatHistory.push({ role: 'assistant', content: data.answer });
+
+        // Keep history manageable
+        if (chatHistory.length > 10) {
+            chatHistory = chatHistory.slice(-10);
+        }
+
+    } catch (e) {
+        console.warn('Concierge ask error:', e);
+        const loadingEl = document.getElementById(loadingId);
+        if (loadingEl) {
+            loadingEl.textContent = 'Error: Could not get response';
+            loadingEl.style.color = 'var(--red)';
+        }
+    }
+};
+
+window.explainError = async function(errorMessage, context) {
+    if (!conciergeAvailable) return null;
+
+    try {
+        const formData = new FormData();
+        formData.append('error_message', errorMessage);
+        formData.append('error_context', context || '');
+
+        const r = await fetch('/api/concierge/explain-error', {
+            method: 'POST',
+            body: formData
+        });
+
+        if (!r.ok) return null;
+        return await r.json();
+    } catch (e) {
+        console.warn('Error explanation failed:', e);
+        return null;
+    }
+};
+
+window.interpretResults = async function() {
+    if (!conciergeAvailable) return;
+
+    // Gather result summaries from loaded tables
+    const summaries = {};
+
+    try {
+        // Try to get signal typology
+        const typologyResult = await conn.query(`SELECT * FROM signal_typology LIMIT 50`);
+        summaries.signals = typologyResult.toArray();
+    } catch (e) { /* table may not exist */ }
+
+    try {
+        // Try to get causal mechanics
+        const causalResult = await conn.query(`SELECT * FROM causal_mechanics LIMIT 20`);
+        summaries.causal = causalResult.toArray();
+    } catch (e) { /* table may not exist */ }
+
+    if (Object.keys(summaries).length === 0) {
+        alert('No analysis results to interpret. Run PRISM analysis first.');
+        return;
+    }
+
+    try {
+        const formData = new FormData();
+        formData.append('system_summary', JSON.stringify(summaries));
+        formData.append('signals', JSON.stringify(summaries.signals || []));
+        formData.append('causal', JSON.stringify(summaries.causal || []));
+
+        const r = await fetch('/api/concierge/interpret', {
+            method: 'POST',
+            body: formData
+        });
+
+        const data = await r.json();
+
+        // Display interpretation in chat
+        const messagesDiv = $('chat-messages');
+        const interpretHtml = renderMarkdown(data.interpretation || 'No interpretation available.');
+        messagesDiv.innerHTML += `<div class="chat-message assistant" style="border-left: 2px solid var(--purple); padding-left: 0.5rem;">${interpretHtml}</div>`;
+        messagesDiv.scrollTop = messagesDiv.scrollHeight;
+
+        // Ensure chat is visible
+        $('concierge-chat').style.display = 'flex';
+
+    } catch (e) {
+        console.warn('Interpretation failed:', e);
+    }
+};
+
 // Init
 setSt('cfg', '—', '');
 setSt('data', '—', '');
 setSt('prism', 'Checking...', '');
+setSt('concierge', '—', '');
 initDuckDB();
 checkPRISM();
+checkConcierge();
 populateQueryDropdown();
 initConfigTab();
 </script>
