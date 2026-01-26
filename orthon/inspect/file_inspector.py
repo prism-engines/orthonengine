@@ -80,6 +80,8 @@ class FileInspection:
 UNIT_PATTERNS = {
     # Pressure
     r'_psi$': 'psi',
+    r'_psia$': 'psia',
+    r'_psig$': 'psig',
     r'_bar$': 'bar',
     r'_kpa$': 'kPa',
     r'_pa$': 'Pa',
@@ -123,6 +125,10 @@ UNIT_PATTERNS = {
     # Concentration
     r'_mol_L$': 'mol/L',
     r'_mol_m3$': 'mol/m³',
+
+    # Angle
+    r'_deg$': '°',
+    r'_rad$': 'rad',
 
     # Other
     r'_pct$': '%',

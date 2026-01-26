@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Ørthon</title>
+    <title>ØRTHON</title>
     <script src="https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.28.0/dist/duckdb-browser-blocking.js"></script>
     <style>
         :root {
@@ -66,13 +66,6 @@
         .nav-tab:hover { color: var(--text); background: var(--input); }
         .nav-tab.active { color: var(--accent); background: var(--input); }
 
-        .header-right {
-            margin-left: auto;
-            display: flex;
-            align-items: center;
-            gap: 1rem;
-        }
-
         main {
             flex: 1;
             display: flex;
@@ -86,6 +79,7 @@
             display: flex;
             flex-direction: column;
             flex-shrink: 0;
+            overflow-y: auto;
         }
 
         .sidebar-section {
@@ -93,7 +87,7 @@
             border-bottom: 1px solid var(--border);
         }
 
-        .sidebar-section:last-child { border-bottom: none; flex: 1; overflow: auto; }
+        .sidebar-section:last-child { border-bottom: none; }
 
         .section-title {
             font-size: 0.7rem;
@@ -104,6 +98,39 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
+        }
+
+        .section-title.collapsible {
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .section-title.collapsible:hover {
+            color: var(--text);
+        }
+
+        .section-title .toggle-icon {
+            font-size: 0.6rem;
+            display: inline-block;
+            transition: transform 0.2s;
+        }
+
+        .section-title.collapsed .toggle-icon {
+            transform: rotate(-90deg);
+        }
+
+        .section-title:not(.collapsed) .toggle-icon {
+            transform: rotate(0deg);
+        }
+
+        .section-content {
+            transition: max-height 0.2s ease-out;
+            overflow: hidden;
+        }
+
+        .section-content.collapsed {
+            max-height: 0 !important;
+            margin: 0;
         }
 
         .content {
@@ -448,7 +475,7 @@
 </head>
 <body>
     <header>
-        <div class="logo"><span>Ø</span>rthon</div>
+        <div class="logo"><span>Ø</span>RTHON</div>
         <div class="nav-tabs">
             <button class="nav-tab active" onclick="showView('data')">Data</button>
             <button class="nav-tab" onclick="showView('config')">Config</button>
@@ -456,64 +483,74 @@
             <button class="nav-tab" onclick="showView('query')">Query</button>
             <button class="nav-tab" onclick="showView('stats')">Stats</button>
         </div>
-        <div class="header-right">
-            <div id="prism-status" class="loading" style="margin-right: 1rem;">
-                <div class="spinner"></div>
-                <span>Checking PRISM...</span>
-            </div>
-            <div id="db-status" class="loading">
-                <div class="spinner"></div>
-                <span>Loading DuckDB...</span>
-            </div>
-        </div>
     </header>
 
     <main>
         <div class="sidebar">
             <!-- Upload -->
             <div class="sidebar-section">
-                <div class="section-title">Data File</div>
-                <div class="upload-zone" id="dropzone" onclick="$('file-input').click()">
-                    <div class="upload-icon">📁</div>
-                    <div class="upload-text">Drop parquet or click</div>
+                <div class="section-title collapsible" onclick="toggleSection(this)">
+                    <span><span class="toggle-icon">▼</span> Data File</span>
                 </div>
-                <input type="file" id="file-input" accept=".parquet,.csv,.xlsx" onchange="onFile(this)">
-                <div id="file-info" class="file-info" style="display:none"></div>
+                <div class="section-content">
+                    <div class="upload-zone" id="dropzone" onclick="$('file-input').click()">
+                        <div class="upload-icon">📁</div>
+                        <div class="upload-text">Drop parquet or click</div>
+                    </div>
+                    <input type="file" id="file-input" accept=".parquet,.csv,.xlsx" onchange="onFile(this)">
+                    <div id="file-info" class="file-info" style="display:none"></div>
+                </div>
+            </div>
+
+            <!-- Config File -->
+            <div class="sidebar-section">
+                <div class="section-title collapsible" onclick="toggleSection(this)">
+                    <span><span class="toggle-icon">▼</span> Config File</span>
+                </div>
+                <div class="section-content">
+                    <div class="upload-zone" id="config-dropzone" onclick="$('config-file-input').click()">
+                        <div class="upload-icon">⚙️</div>
+                        <div class="upload-text">Drop JSON/YAML or click</div>
+                    </div>
+                    <div id="config-file-info" class="file-info" style="display:none"></div>
+                </div>
             </div>
 
             <!-- Inspection Results -->
             <div class="sidebar-section" id="inspection-section" style="display: none;">
-                <a href="#" onclick="toggleConstants(); return false;" id="constants-toggle" style="font-size: 0.65rem; color: var(--accent); text-decoration: none; display: block; margin-bottom: 0.4rem;">+ Add Constants</a>
-                <div id="constants-panel" style="display: none; margin-bottom: 0.75rem; padding: 0.5rem; background: var(--input); border-radius: 4px;">
-                    <div style="display: grid; grid-template-columns: 1fr 80px; gap: 0.3rem; font-size: 0.7rem;">
-                        <label style="color: var(--dim); align-self: center;">Density (kg/m³)</label>
-                        <input type="number" id="const-density" placeholder="—" style="background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 0.25rem; border-radius: 3px; font: inherit; font-size: 0.7rem;">
-
-                        <label style="color: var(--dim); align-self: center;">Viscosity (Pa·s)</label>
-                        <input type="number" id="const-viscosity" placeholder="—" step="0.0001" style="background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 0.25rem; border-radius: 3px; font: inherit; font-size: 0.7rem;">
-
-                        <label style="color: var(--dim); align-self: center;">Diameter (m)</label>
-                        <input type="number" id="const-diameter" placeholder="—" step="0.001" style="background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 0.25rem; border-radius: 3px; font: inherit; font-size: 0.7rem;">
-
-                        <label style="color: var(--dim); align-self: center;">Pipe Length (m)</label>
-                        <input type="number" id="const-length" placeholder="—" style="background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 0.25rem; border-radius: 3px; font: inherit; font-size: 0.7rem;">
-
-                        <label style="color: var(--dim); align-self: center;">Temperature (K)</label>
-                        <input type="number" id="const-temperature" placeholder="—" style="background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 0.25rem; border-radius: 3px; font: inherit; font-size: 0.7rem;">
-
-                        <label style="color: var(--dim); align-self: center;">Pressure (Pa)</label>
-                        <input type="number" id="const-pressure" placeholder="—" style="background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 0.25rem; border-radius: 3px; font: inherit; font-size: 0.7rem;">
-                    </div>
-                    <div style="margin-top: 0.5rem; font-size: 0.6rem; color: var(--dim);">
-                        Constants unlock physics engines (Reynolds, pressure drop, etc.)
-                    </div>
-                </div>
-                <div class="section-title">
-                    Detected Structure
+                <div class="section-title collapsible" onclick="toggleSection(this)">
+                    <span><span class="toggle-icon">▼</span> Detected Structure</span>
                     <span id="inspection-level" style="font-size: 0.65rem; padding: 0.1rem 0.3rem; background: var(--accent); color: var(--bg); border-radius: 3px;">—</span>
                 </div>
-                <div id="inspection-content" style="font-size: 0.7rem;">
-                    <!-- Filled by JS -->
+                <div class="section-content">
+                    <a href="#" onclick="toggleConstants(); return false;" id="constants-toggle" style="font-size: 0.65rem; color: var(--accent); text-decoration: none; display: block; margin-bottom: 0.4rem;">+ Add Constants</a>
+                    <div id="constants-panel" style="display: none; margin-bottom: 0.75rem; padding: 0.5rem; background: var(--input); border-radius: 4px;">
+                        <div style="display: grid; grid-template-columns: 1fr 80px; gap: 0.3rem; font-size: 0.7rem;">
+                            <label style="color: var(--dim); align-self: center;">Density (kg/m³)</label>
+                            <input type="number" id="const-density" placeholder="—" style="background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 0.25rem; border-radius: 3px; font: inherit; font-size: 0.7rem;">
+
+                            <label style="color: var(--dim); align-self: center;">Viscosity (Pa·s)</label>
+                            <input type="number" id="const-viscosity" placeholder="—" step="0.0001" style="background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 0.25rem; border-radius: 3px; font: inherit; font-size: 0.7rem;">
+
+                            <label style="color: var(--dim); align-self: center;">Diameter (m)</label>
+                            <input type="number" id="const-diameter" placeholder="—" step="0.001" style="background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 0.25rem; border-radius: 3px; font: inherit; font-size: 0.7rem;">
+
+                            <label style="color: var(--dim); align-self: center;">Pipe Length (m)</label>
+                            <input type="number" id="const-length" placeholder="—" style="background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 0.25rem; border-radius: 3px; font: inherit; font-size: 0.7rem;">
+
+                            <label style="color: var(--dim); align-self: center;">Temperature (K)</label>
+                            <input type="number" id="const-temperature" placeholder="—" style="background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 0.25rem; border-radius: 3px; font: inherit; font-size: 0.7rem;">
+
+                            <label style="color: var(--dim); align-self: center;">Pressure (Pa)</label>
+                            <input type="number" id="const-pressure" placeholder="—" style="background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 0.25rem; border-radius: 3px; font: inherit; font-size: 0.7rem;">
+                        </div>
+                        <div style="margin-top: 0.5rem; font-size: 0.6rem; color: var(--dim);">
+                            Constants unlock physics engines (Reynolds, pressure drop, etc.)
+                        </div>
+                    </div>
+                    <div id="inspection-content" style="font-size: 0.7rem;">
+                        <!-- Filled by JS -->
+                    </div>
                 </div>
             </div>
 
@@ -524,42 +561,48 @@
 
             <!-- PRISM Analysis -->
             <div class="sidebar-section">
-                <div class="section-title">PRISM Analysis</div>
-                <div style="display: flex; flex-direction: column; gap: 0.5rem;">
-                    <label style="font-size: 0.7rem; color: var(--dim);">Discipline</label>
-                    <select id="discipline-select" style="background: var(--input); border: 1px solid var(--border); color: var(--text); padding: 0.4rem 0.5rem; border-radius: 4px; font: inherit; font-size: 0.75rem;">
-                        <option value="core" selected>Core Analysis</option>
-                        <option value="thermodynamics">Thermodynamics</option>
-                        <option value="transport">Transport Phenomena</option>
-                        <option value="reaction">Reaction Engineering</option>
-                        <option value="process_control">Process Control</option>
-                        <option value="mechanical">Mechanical Systems</option>
-                        <option value="electrical">Electrical Systems</option>
-                        <option value="fluid_dynamics">Fluid Dynamics</option>
-                    </select>
-                    <label style="font-size: 0.7rem; color: var(--dim);">Window Size</label>
-                    <input type="number" id="window-size" value="50" min="5" style="background: var(--input); border: 1px solid var(--border); color: var(--text); padding: 0.4rem 0.5rem; border-radius: 4px; font: inherit; font-size: 0.75rem;">
-                    <label style="font-size: 0.7rem; color: var(--dim);">Window Stride</label>
-                    <input type="number" id="window-stride" value="25" min="1" style="background: var(--input); border: 1px solid var(--border); color: var(--text); padding: 0.4rem 0.5rem; border-radius: 4px; font: inherit; font-size: 0.75rem;">
+                <div class="section-title collapsible" onclick="toggleSection(this)">
+                    <span><span class="toggle-icon">▼</span> PRISM Analysis</span>
                 </div>
-                <div class="actions">
-                    <button class="btn btn-primary" id="analyze-btn" onclick="analyzeWithPRISM()" disabled>Analyze with PRISM</button>
-                </div>
-                <div id="prism-progress" style="display: none; margin-top: 0.5rem;">
-                    <div class="loading">
-                        <div class="spinner"></div>
-                        <span id="prism-progress-text">Sending to PRISM...</span>
+                <div class="section-content">
+                    <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+                        <label style="font-size: 0.7rem; color: var(--dim);">Discipline</label>
+                        <select id="discipline-select" style="background: var(--input); border: 1px solid var(--border); color: var(--text); padding: 0.4rem 0.5rem; border-radius: 4px; font: inherit; font-size: 0.75rem;">
+                            <option value="core" selected>Core Analysis</option>
+                            <option value="thermodynamics">Thermodynamics</option>
+                            <option value="transport">Transport Phenomena</option>
+                            <option value="reaction">Reaction Engineering</option>
+                            <option value="process_control">Process Control</option>
+                            <option value="mechanical">Mechanical Systems</option>
+                            <option value="electrical">Electrical Systems</option>
+                            <option value="fluid_dynamics">Fluid Dynamics</option>
+                        </select>
+                        <label style="font-size: 0.7rem; color: var(--dim);">Window Size</label>
+                        <input type="number" id="window-size" value="50" min="5" style="background: var(--input); border: 1px solid var(--border); color: var(--text); padding: 0.4rem 0.5rem; border-radius: 4px; font: inherit; font-size: 0.75rem;">
+                        <label style="font-size: 0.7rem; color: var(--dim);">Window Stride</label>
+                        <input type="number" id="window-stride" value="25" min="1" style="background: var(--input); border: 1px solid var(--border); color: var(--text); padding: 0.4rem 0.5rem; border-radius: 4px; font: inherit; font-size: 0.75rem;">
+                    </div>
+                    <div class="actions">
+                        <button class="btn btn-primary" id="analyze-btn" onclick="analyzeWithPRISM()" disabled>Analyze with PRISM</button>
+                    </div>
+                    <div id="prism-progress" style="display: none; margin-top: 0.5rem;">
+                        <div class="loading">
+                            <div class="spinner"></div>
+                            <span id="prism-progress-text">Sending to PRISM...</span>
+                        </div>
                     </div>
                 </div>
             </div>
 
             <!-- Capabilities -->
             <div class="sidebar-section">
-                <div class="section-title">
-                    Capabilities
+                <div class="section-title collapsible" onclick="toggleSection(this)">
+                    <span><span class="toggle-icon">▼</span> Capabilities</span>
                     <span id="cap-count">—</span>
                 </div>
-                <div class="cap-list" id="caps"></div>
+                <div class="section-content">
+                    <div class="cap-list" id="caps"></div>
+                </div>
             </div>
         </div>
 
@@ -708,13 +751,11 @@ async function initDuckDB() {
         await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
         conn = await db.connect();
 
-        $('db-status').innerHTML = '<span style="color: var(--green)">✓ DuckDB Ready</span>';
         setSt('db', 'Ready', 'ok');
 
         URL.revokeObjectURL(worker_url);
     } catch (e) {
         console.error('DuckDB init failed:', e);
-        $('db-status').innerHTML = '<span style="color: var(--red)">✗ DuckDB Failed</span>';
         setSt('db', 'Error', 'err');
     }
 }
@@ -1083,7 +1124,7 @@ window.checkCapabilities = function() {
     }
 };
 
-// Drag and drop
+// Drag and drop - Data
 const dz = $('dropzone');
 dz.ondragover = e => { e.preventDefault(); dz.classList.add('dragover'); };
 dz.ondragleave = () => dz.classList.remove('dragover');
@@ -1095,6 +1136,54 @@ dz.ondrop = e => {
         onFile($('file-input'));
     }
 };
+
+// Drag and drop - Config
+const cdz = $('config-dropzone');
+cdz.ondragover = e => { e.preventDefault(); cdz.classList.add('dragover'); };
+cdz.ondragleave = () => cdz.classList.remove('dragover');
+cdz.ondrop = e => {
+    e.preventDefault();
+    cdz.classList.remove('dragover');
+    const file = e.dataTransfer.files[0];
+    if (file) {
+        cdz.classList.add('has-file');
+        loadConfigFile(file);
+    }
+};
+
+function loadConfigFile(file) {
+    const reader = new FileReader();
+    reader.onload = (event) => {
+        const content = event.target.result;
+        let config;
+
+        try {
+            if (file.name.endsWith('.yaml') || file.name.endsWith('.yml')) {
+                config = parseSimpleYAML(content);
+            } else {
+                config = JSON.parse(content);
+            }
+
+            const editor = $('config-editor');
+            editor.value = JSON.stringify(config, null, 2);
+            validateConfigEditor(editor.value);
+            checkCapabilities();
+
+            // Show file info and green border
+            const cdz = $('config-dropzone');
+            if (cdz) cdz.classList.add('has-file');
+            $('config-file-info').style.display = 'flex';
+            $('config-file-info').innerHTML = `<span class="name">${file.name}</span><span class="size">${(file.size/1024).toFixed(1)} KB</span>`;
+
+            showConfigValidation('Loaded: ' + file.name, 'valid');
+
+        } catch (err) {
+            showConfigValidation('Parse error: ' + err.message, 'invalid');
+        }
+    };
+
+    reader.readAsText(file);
+}
 
 // =====================================================================
 // FILE INSPECTION
@@ -1146,15 +1235,23 @@ async function inspectFile(file) {
         html += `<span style="color: var(--accent);">${signals.length}</span>`;
         html += `</div>`;
 
-        // Signals with units
-        const withUnits = signals.filter(s => s.unit);
-        if (withUnits.length > 0) {
+        // Show all signals
+        if (signals.length > 0) {
             html += `<div style="margin-bottom: 0.5rem; padding-left: 0.5rem; border-left: 2px solid var(--border);">`;
-            for (const sig of withUnits.slice(0, 6)) {
-                html += `<div><span style="color: var(--text);">${sig.name}</span> <span style="color: var(--purple);">[${sig.unit}]</span></div>`;
+            for (const sig of signals.slice(0, 6)) {
+                html += `<div><span style="color: var(--text);">${sig.name}</span>`;
+                if (sig.unit) html += ` <span style="color: var(--purple);">[${sig.unit}]</span>`;
+                html += `</div>`;
             }
-            if (withUnits.length > 6) {
-                html += `<div style="color: var(--dim);">...and ${withUnits.length - 6} more</div>`;
+            if (signals.length > 6) {
+                html += `<div id="signals-more" style="display: none;">`;
+                for (const sig of signals.slice(6)) {
+                    html += `<div><span style="color: var(--text);">${sig.name}</span>`;
+                    if (sig.unit) html += ` <span style="color: var(--purple);">[${sig.unit}]</span>`;
+                    html += `</div>`;
+                }
+                html += `</div>`;
+                html += `<a href="#" id="signals-toggle" onclick="toggleSignals(); return false;" style="color: var(--accent); text-decoration: none; font-size: 0.7rem;">...and ${signals.length - 6} more</a>`;
             }
             html += `</div>`;
         }
@@ -1246,11 +1343,9 @@ async function checkPRISM() {
         prismAvailable = data.available;
 
         if (prismAvailable) {
-            $('prism-status').innerHTML = '<span style="color: var(--green)">✓ PRISM Connected</span>';
-            setSt('prism', `v${data.version || '?'}`, 'ok');
+            setSt('prism', 'Ready', 'ok');
             updateAnalyzeButton();
         } else {
-            $('prism-status').innerHTML = '<span style="color: var(--yellow)">⚠ PRISM Offline</span>';
             setSt('prism', 'Offline', 'warn');
         }
     } catch (e) {
@@ -1261,12 +1356,10 @@ async function checkPRISM() {
             prismAvailable = data.status === 'ok';
 
             if (prismAvailable) {
-                $('prism-status').innerHTML = '<span style="color: var(--green)">✓ PRISM Direct</span>';
                 setSt('prism', 'Direct', 'ok');
                 updateAnalyzeButton();
             }
         } catch (e2) {
-            $('prism-status').innerHTML = '<span style="color: var(--red)">✗ PRISM Unavailable</span>';
             setSt('prism', 'Unavailable', 'err');
         }
     }
@@ -1421,6 +1514,26 @@ window.toggleConstants = function() {
     }
 };
 
+window.toggleSignals = function() {
+    const more = $('signals-more');
+    const toggle = $('signals-toggle');
+
+    if (more.style.display === 'none') {
+        more.style.display = 'block';
+        toggle.textContent = '− show less';
+    } else {
+        more.style.display = 'none';
+        const count = more.querySelectorAll('div').length;
+        toggle.textContent = `...and ${count} more`;
+    }
+};
+
+window.toggleSection = function(titleEl) {
+    const content = titleEl.nextElementSibling;
+    titleEl.classList.toggle('collapsed');
+    content.classList.toggle('collapsed');
+};
+
 function getUserConstants() {
     const constants = {};
 
@@ -1562,32 +1675,7 @@ function initConfigTab() {
 function handleConfigFileLoad(e) {
     const file = e.target.files[0];
     if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = (event) => {
-        const content = event.target.result;
-        let config;
-
-        try {
-            if (file.name.endsWith('.yaml') || file.name.endsWith('.yml')) {
-                // Simple YAML to JSON conversion for basic configs
-                config = parseSimpleYAML(content);
-            } else {
-                config = JSON.parse(content);
-            }
-
-            const editor = $('config-editor');
-            editor.value = JSON.stringify(config, null, 2);
-            validateConfigEditor(editor.value);
-            checkCapabilities();
-            showConfigValidation('Loaded: ' + file.name, 'valid');
-
-        } catch (err) {
-            showConfigValidation('Parse error: ' + err.message, 'invalid');
-        }
-    };
-
-    reader.readAsText(file);
+    loadConfigFile(file);
     e.target.value = ''; // Reset for same file reload
 }
 
