@@ -969,6 +969,56 @@ async function loadStats() {
             </div>
         `;
 
+        // Index column info from inspection
+        if (lastInspection) {
+            const indexCol = lastInspection.sequence_column;
+            const indexSignal = lastInspection.signals?.find(s => s.name === indexCol);
+            const indexUnit = indexSignal?.unit || 'none';
+            const indexQty = indexSignal?.quantity || 'sequence';
+
+            html += `
+                <div class="stat-card" style="border-left: 3px solid var(--accent);">
+                    <div class="stat-label">Index Column</div>
+                    <div class="stat-value">${escapeHtml(indexCol || 'auto')}</div>
+                    <div class="stat-sub">Unit: ${escapeHtml(indexUnit)} (${escapeHtml(indexQty)})</div>
+                </div>
+            `;
+
+            // Entity info
+            if (lastInspection.entity_column) {
+                html += `
+                    <div class="stat-card">
+                        <div class="stat-label">Entity Column</div>
+                        <div class="stat-value">${escapeHtml(lastInspection.entity_column)}</div>
+                        <div class="stat-sub">${lastInspection.entities?.length || 1} entities</div>
+                    </div>
+                `;
+            }
+
+            // Quantities detected
+            if (lastInspection.quantities_detected?.length > 0) {
+                html += `
+                    <div class="stat-card">
+                        <div class="stat-label">Quantities Detected</div>
+                        <div class="stat-value">${lastInspection.quantities_detected.length}</div>
+                        <div class="stat-sub">${escapeHtml(lastInspection.quantities_detected.slice(0, 3).join(', '))}${lastInspection.quantities_detected.length > 3 ? '...' : ''}</div>
+                    </div>
+                `;
+            }
+
+            // Constants
+            const constCount = Object.keys(lastInspection.constants || {}).length;
+            if (constCount > 0) {
+                html += `
+                    <div class="stat-card">
+                        <div class="stat-label">Constants</div>
+                        <div class="stat-value">${constCount}</div>
+                        <div class="stat-sub">${escapeHtml(Object.keys(lastInspection.constants).slice(0, 3).join(', '))}</div>
+                    </div>
+                `;
+            }
+        }
+
         // Get numeric column stats
         const numericCols = columns.filter(c =>
             c.column_type.includes('INT') ||
