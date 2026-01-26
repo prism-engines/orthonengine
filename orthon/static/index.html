@@ -538,6 +538,106 @@
             border-color: var(--red);
             color: white;
         }
+
+        /* README styles */
+        .readme-content {
+            font-size: 0.8rem;
+            line-height: 1.6;
+            color: var(--text);
+        }
+
+        .readme-content h1 {
+            font-size: 1.4rem;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 0.5rem;
+            margin: 1.5rem 0 1rem 0;
+            color: var(--text);
+        }
+
+        .readme-content h1:first-child {
+            margin-top: 0;
+        }
+
+        .readme-content h2 {
+            font-size: 1.1rem;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 0.3rem;
+            margin: 1.25rem 0 0.75rem 0;
+            color: var(--text);
+        }
+
+        .readme-content h3 {
+            font-size: 0.95rem;
+            margin: 1rem 0 0.5rem 0;
+            color: var(--text);
+        }
+
+        .readme-content p {
+            margin: 0.5rem 0;
+        }
+
+        .readme-content code {
+            background: var(--input);
+            padding: 0.15rem 0.4rem;
+            border-radius: 3px;
+            font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+            font-size: 0.75rem;
+        }
+
+        .readme-content pre {
+            background: var(--input);
+            padding: 0.75rem 1rem;
+            border-radius: 4px;
+            overflow-x: auto;
+            margin: 0.75rem 0;
+        }
+
+        .readme-content pre code {
+            background: none;
+            padding: 0;
+        }
+
+        .readme-content ul, .readme-content ol {
+            margin: 0.5rem 0;
+            padding-left: 1.5rem;
+        }
+
+        .readme-content li {
+            margin: 0.25rem 0;
+        }
+
+        .readme-content a {
+            color: var(--accent);
+            text-decoration: none;
+        }
+
+        .readme-content a:hover {
+            text-decoration: underline;
+        }
+
+        .readme-content blockquote {
+            border-left: 3px solid var(--accent);
+            margin: 0.75rem 0;
+            padding: 0.5rem 1rem;
+            background: var(--input);
+            color: var(--dim);
+        }
+
+        .readme-content table {
+            border-collapse: collapse;
+            margin: 0.75rem 0;
+            width: 100%;
+        }
+
+        .readme-content th, .readme-content td {
+            border: 1px solid var(--border);
+            padding: 0.4rem 0.6rem;
+            text-align: left;
+        }
+
+        .readme-content th {
+            background: var(--input);
+        }
     </style>
 </head>
 <body>
@@ -549,6 +649,7 @@
             <button class="nav-tab" onclick="showView('schema')">Schema</button>
             <button class="nav-tab" onclick="showView('query')">Query</button>
             <button class="nav-tab" onclick="showView('stats')">Stats</button>
+            <button class="nav-tab" onclick="showView('readme')">README</button>
         </div>
     </header>
 
@@ -750,6 +851,16 @@
                     <div class="empty-state">
                         <div class="empty-state-icon">📈</div>
                         <div class="empty-state-text">Load data to view statistics</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- README View -->
+            <div class="view" id="view-readme">
+                <div id="readme-container" style="overflow: auto; flex: 1; padding: 1rem;">
+                    <div class="empty-state">
+                        <div class="empty-state-icon">📖</div>
+                        <div class="empty-state-text">Loading README...</div>
                     </div>
                 </div>
             </div>
@@ -1125,13 +1236,134 @@ function renderTable(containerId, columns, rows) {
 // VIEW NAVIGATION
 // =====================================================================
 
+let readmeLoaded = false;
+
 window.showView = function(view) {
     document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
     document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
 
     $('view-' + view).classList.add('active');
     event.target.classList.add('active');
+
+    // Load README on first view
+    if (view === 'readme' && !readmeLoaded) {
+        loadReadme();
+    }
 };
+
+// =====================================================================
+// README
+// =====================================================================
+
+async function loadReadme() {
+    const container = $('readme-container');
+
+    try {
+        // Try fetching from GitHub raw URL first (for repo README)
+        const urls = [
+            '/static/README.md',
+            '/README.md',
+            'https://raw.githubusercontent.com/prism-engines/orthon/main/README.md',
+        ];
+
+        let content = null;
+        for (const url of urls) {
+            try {
+                const r = await fetch(url);
+                if (r.ok) {
+                    content = await r.text();
+                    break;
+                }
+            } catch (e) {
+                continue;
+            }
+        }
+
+        if (!content) {
+            // Fallback content
+            content = `# ORTHON
+
+Diagnostic interpreter for PRISM outputs.
+
+## Overview
+
+ORTHON is the intelligent orchestration layer for PRISM compute engines.
+
+### Key Features
+
+- **File Inspection**: Automatically detect units, constants, and signal types
+- **Pre-flight Validation**: Verify data before sending to PRISM
+- **SQL Queries**: Run DuckDB queries against results
+- **Physics Routing**: Route to appropriate engines based on detected quantities
+
+## Usage
+
+1. Upload a data file (CSV, Parquet, or Excel)
+2. Review detected structure and constants
+3. Configure window parameters
+4. Click "Analyze with PRISM"
+5. Explore results with SQL queries
+
+## Architecture
+
+\`\`\`
+User → ORTHON (gatekeeper) → PRISM (compute) → ORTHON (results)
+\`\`\`
+
+PRISM stays dumb, ORTHON does the thinking.
+`;
+        }
+
+        // Simple markdown rendering
+        const html = renderMarkdown(content);
+        container.innerHTML = `<div class="readme-content">${html}</div>`;
+        readmeLoaded = true;
+
+    } catch (e) {
+        container.innerHTML = `<div class="empty-state"><div class="empty-state-text" style="color: var(--red)">Error loading README: ${escapeHtml(e.message)}</div></div>`;
+    }
+}
+
+function renderMarkdown(md) {
+    // Simple markdown to HTML converter
+    let html = escapeHtml(md);
+
+    // Code blocks (``` ... ```)
+    html = html.replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>');
+
+    // Inline code
+    html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+
+    // Headers
+    html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+    html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
+    html = html.replace(/^# (.+)$/gm, '<h1>$1</h1>');
+
+    // Bold and italic
+    html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+
+    // Links
+    html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
+
+    // Unordered lists
+    html = html.replace(/^- (.+)$/gm, '<li>$1</li>');
+    html = html.replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>');
+
+    // Blockquotes
+    html = html.replace(/^&gt; (.+)$/gm, '<blockquote>$1</blockquote>');
+
+    // Paragraphs (double newlines)
+    html = html.replace(/\n\n+/g, '</p><p>');
+    html = '<p>' + html + '</p>';
+
+    // Clean up empty paragraphs and fix structure
+    html = html.replace(/<p>\s*<(h[123]|ul|pre|blockquote)/g, '<$1');
+    html = html.replace(/<\/(h[123]|ul|pre|blockquote)>\s*<\/p>/g, '</$1>');
+    html = html.replace(/<p>\s*<\/p>/g, '');
+
+    return html;
+}
 
 // =====================================================================
 // CAPABILITIES
