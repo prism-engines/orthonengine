@@ -8,7 +8,11 @@
 -- Load data
 .read sql/00_load.sql
 
--- 01: Calculus (derivatives, curvature)
+-- ============================================================================
+-- PASS 1: Foundation (before PRISM)
+-- ============================================================================
+
+-- 01: Calculus
 .read sql/01_calculus/001_first_derivative.sql
 .read sql/01_calculus/002_second_derivative.sql
 .read sql/01_calculus/003_curvature.sql
@@ -17,22 +21,57 @@
 .read sql/02_signal_class/001_from_units.sql
 .read sql/02_signal_class/002_from_data.sql
 .read sql/02_signal_class/003_classify.sql
+.read sql/02_signal_class/004_prism_requests.sql
+
+SELECT '=== PASS 1: SIGNAL CLASSIFICATION ===' AS section;
+SELECT signal_id, value_unit, signal_class, interpolation_valid, class_source
+FROM v_signal_class ORDER BY signal_id;
+
+SELECT '=== PRISM WORK ORDERS ===' AS section;
+SELECT signal_id, signal_class, needs_hurst, needs_fft, needs_lyapunov
+FROM v_prism_requests ORDER BY priority DESC, signal_id;
+
+SELECT '=== PRISM REQUEST SUMMARY ===' AS section;
+SELECT * FROM v_prism_request_summary;
+
+-- ============================================================================
+-- PASS 2: Analysis (uses PRISM results if available)
+-- ============================================================================
+
+-- 03: Signal Typology
+.read sql/03_signal_typology/001_persistence.sql
+.read sql/03_signal_typology/002_periodicity.sql
+.read sql/03_signal_typology/003_stationarity.sql
+.read sql/03_signal_typology/004_classify.sql
+
+SELECT '=== PASS 2: SIGNAL TYPOLOGY ===' AS section;
+SELECT signal_id, signal_class, behavioral_class, stationarity_class, behavioral_profile
+FROM v_signal_typology ORDER BY signal_id;
+
+-- 04: Behavioral Geometry
+.read sql/04_behavioral_geometry/001_correlation.sql
+.read sql/04_behavioral_geometry/002_lagged_correlation.sql
+
+SELECT '=== CORRELATION MATRIX (strong only) ===' AS section;
+SELECT * FROM v_strong_correlations LIMIT 20;
+
+SELECT '=== LEAD/LAG RELATIONSHIPS ===' AS section;
+SELECT * FROM v_optimal_lag LIMIT 20;
+
+-- 05: Dynamical Systems
+.read sql/05_dynamical_systems/001_regime_detection.sql
+
+SELECT '=== REGIME SUMMARY ===' AS section;
+SELECT * FROM v_regime_summary WHERE regime_id > 1 OR signal_id LIKE '%regime%';
 
 -- ============================================================================
 -- VALIDATION
 -- ============================================================================
 
-SELECT '=== SIGNAL CLASSIFICATION ===' AS section;
-SELECT signal_id, value_unit, signal_class, interpolation_valid, class_source, est_period
-FROM v_signal_class
-ORDER BY signal_id;
-
-SELECT '=== CLASSIFICATION SUMMARY ===' AS section;
-SELECT * FROM v_signal_class_summary;
-
-SELECT '=== VALIDATION: Compare to Ground Truth ===' AS section;
--- Ground truth expectations:
--- sine_pure: periodic, sine_noisy: periodic, damped_oscillation: periodic
--- random_walk: analog, trending: analog, mean_reverting: analog
--- coupled_follower: analog, regime_break: analog
--- step_digital: digital, event_sparse: event
+SELECT '=== VALIDATION SUMMARY ===' AS section;
+SELECT
+    (SELECT COUNT(*) FROM v_signal_class) AS total_signals,
+    (SELECT COUNT(*) FROM v_signal_class WHERE signal_class = 'analog') AS analog,
+    (SELECT COUNT(*) FROM v_signal_class WHERE signal_class = 'periodic') AS periodic,
+    (SELECT COUNT(*) FROM v_signal_class WHERE signal_class = 'digital') AS digital,
+    (SELECT COUNT(*) FROM v_signal_class WHERE signal_class = 'event') AS event;
