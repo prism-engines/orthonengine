@@ -86,7 +86,7 @@ SELECT
         'classification': {
             'class': signal_class,
             'quantity': quantity,
-            'unit': value_unit
+            'unit': unit
         },
         'typology': {
             'persistence': persistence_class,

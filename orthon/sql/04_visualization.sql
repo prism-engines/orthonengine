@@ -21,7 +21,7 @@ SELECT
     o.signal_id,
     o.I AS x,
     o.y,
-    o.value_unit,
+    o.unit,
     s.signal_class
 FROM observations o
 LEFT JOIN v_signal_class_unit s USING (signal_id)
@@ -33,7 +33,7 @@ SELECT
     o.signal_id,
     o.I AS x,
     o.y,
-    o.value_unit,
+    o.unit,
     d.regime_id,
     d.regime_start_idx,
     d.regime_end_idx
@@ -144,7 +144,7 @@ SELECT
     -- Classification
     c.signal_class,
     c.quantity,
-    c.value_unit,
+    c.unit,
     -- Typology
     a.persistence_class,
     a.entropy_class,

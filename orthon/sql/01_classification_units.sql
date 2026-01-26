@@ -117,7 +117,7 @@ INSERT INTO unit_signal_class VALUES
 CREATE OR REPLACE VIEW v_signal_class_unit AS
 SELECT
     o.signal_id,
-    o.value_unit,
+    o.unit,
     COALESCE(u.signal_class, 'analog') AS signal_class,
     COALESCE(u.quantity, 'unknown') AS quantity,
     -- Is calculus valid for this signal?
@@ -131,9 +131,9 @@ SELECT
         ELSE FALSE
     END AS interpolation_valid
 FROM (
-    SELECT DISTINCT signal_id, value_unit FROM observations
+    SELECT DISTINCT signal_id, unit FROM observations
 ) o
-LEFT JOIN unit_signal_class u ON LOWER(o.value_unit) = LOWER(u.unit);
+LEFT JOIN unit_signal_class u ON LOWER(o.unit) = LOWER(u.unit);
 
 -- Summary for UI
 CREATE OR REPLACE VIEW v_signal_class_summary AS

@@ -528,10 +528,10 @@ INSERT OR REPLACE INTO dimensionless_numbers VALUES
 CREATE OR REPLACE VIEW v_unit_validation AS
 SELECT
     o.signal_id,
-    o.value_unit,
+    o.unit,
 
     -- Is this a known unit?
-    (SELECT COUNT(*) > 0 FROM unit_conversions WHERE unit = o.value_unit) AS unit_recognized,
+    (SELECT COUNT(*) > 0 FROM unit_conversions WHERE unit = o.unit) AS unit_recognized,
 
     -- Signal class from unit
     COALESCE(usc.signal_class, 'unknown') AS inferred_signal_class,
@@ -546,9 +546,9 @@ SELECT
     usc.typical_range_min,
     usc.typical_range_max
 
-FROM (SELECT DISTINCT signal_id, value_unit FROM observations) o
-LEFT JOIN unit_signal_class usc ON o.value_unit = usc.unit
-LEFT JOIN unit_conversions uc ON o.value_unit = uc.unit;
+FROM (SELECT DISTINCT signal_id, unit FROM observations) o
+LEFT JOIN unit_signal_class usc ON o.unit = usc.unit
+LEFT JOIN unit_conversions uc ON o.unit = uc.unit;
 
 
 .print '✓ Constants and units system loaded'
