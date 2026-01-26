@@ -551,6 +551,15 @@ def inspect_file(filepath: str) -> FileInspection:
     else:
         entities = ['default']
 
+    # Check for dedicated unit column (e.g., "unit" or "units" column with values like "V", "PSI")
+    unit_column = None
+    unit_column_values = []
+    for col in df.columns:
+        if col.lower() in ('unit', 'units', 'uom', 'unit_of_measure'):
+            unit_column = col
+            unit_column_values = df[col].dropna().unique().tolist()
+            break
+
     # Analyze each column
     signals = []
     quantities_detected = set()
@@ -638,8 +647,10 @@ def inspect_file(filepath: str) -> FileInspection:
         signals.append(col_info)
 
     # Generate warnings for potential issues
-    if units_detected == 0:
+    if units_detected == 0 and not unit_column_values:
         warnings.append("No units detected in column names. Consider using suffixes like _psi, _degF, _m_s")
+    elif unit_column:
+        units_detected = len(unit_column_values)  # Count unique units from unit column
 
     high_null_cols = [s.name for s in signals if s.null_pct > 20 and not s.is_constant]
     if high_null_cols:
