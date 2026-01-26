@@ -36,6 +36,7 @@ from orthon.config.domains import (
 from orthon.shared import DISCIPLINES
 from orthon.prism_client import get_prism_client, prism_status
 from orthon.inspection import inspect_file, detect_capabilities, validate_results
+from orthon.utils.index_detection import IndexDetector, detect_index, get_index_detection_prompt
 
 
 # Store last results path for serving
@@ -360,6 +361,73 @@ async def validate_prism_results():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/detect-index")
+async def detect_index_column(file: UploadFile = File(...)):
+    """
+    Detect index column type and sampling interval.
+
+    TIME indices (auto-detectable):
+        - ISO 8601: "2024-01-15T14:30:00Z"
+        - Unix epoch: 1705329000
+        - Date strings: "2024-01-15", "01/15/2024"
+        - Excel serial: 45306.604166
+
+    OTHER indices (need user input):
+        - Space: requires unit (m, ft, km)
+        - Frequency: requires unit (Hz, kHz)
+        - Scale: requires unit
+        - Cycle: requires duration per cycle
+
+    Returns:
+        - column: detected index column name
+        - index_type: timestamp, unix_seconds, unix_ms, cycle, spatial, frequency, unknown
+        - dimension: time, space, frequency, scale, unknown
+        - confidence: high, medium, low
+        - needs_user_input: bool
+        - sampling_interval_seconds: (for time indices)
+        - sampling_unit: seconds, minutes, hours, days
+        - sampling_value: numeric value in sampling_unit
+        - regularity: regular, mostly_regular, irregular
+        - user_prompt: question to ask user (if needs_user_input)
+    """
+    # Save uploaded file
+    suffix = Path(file.filename).suffix if file.filename else '.csv'
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        content = await file.read()
+        tmp.write(content)
+        tmp_path = Path(tmp.name)
+
+    try:
+        # Read file
+        if suffix.lower() == '.parquet':
+            df = pl.read_parquet(tmp_path)
+        elif suffix.lower() == '.csv':
+            df = pl.read_csv(tmp_path)
+        elif suffix.lower() in ('.xls', '.xlsx'):
+            df = pl.read_excel(tmp_path)
+        else:
+            raise HTTPException(status_code=400, detail=f"Unsupported file type: {suffix}")
+
+        # Detect index
+        result = detect_index(df)
+
+        # Get prompt for user if needed
+        user_prompt = get_index_detection_prompt(result) if result.needs_user_input else None
+
+        response = result.to_dict()
+        if user_prompt:
+            response['user_prompt'] = user_prompt
+
+        return response
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+
 # =============================================================================
 # PRISM ENDPOINTS
 # =============================================================================
@@ -540,6 +608,542 @@ async def list_results():
         "parquets": [p.name for p in parquets],
         "parquet_urls": [f"/api/prism/results/{p.name}" for p in parquets],
     }
+
+
+# =============================================================================
+# CONCIERGE API (LLM-Assisted Workflow)
+# =============================================================================
+
+from orthon.concierge import (
+    DataConcierge,
+    schema_from_dataframe,
+    concierge_available,
+    get_concierge,
+)
+
+
+@app.get("/api/concierge/status")
+async def concierge_status():
+    """Check if LLM concierge is available."""
+    available = concierge_available()
+    return {
+        "available": available,
+        "message": "Concierge ready" if available else "Set ANTHROPIC_API_KEY to enable AI assistance"
+    }
+
+
+@app.post("/api/concierge/validate")
+async def concierge_validate(file: UploadFile = File(...)):
+    """
+    Validate uploaded data using LLM.
+
+    Returns:
+    - Markdown report with findings
+    - Suggested configuration JSON
+    - List of issues with fixes
+    """
+    if not concierge_available():
+        raise HTTPException(
+            status_code=503,
+            detail="Concierge not available. Set ANTHROPIC_API_KEY environment variable."
+        )
+
+    # Save and read file
+    suffix = Path(file.filename).suffix if file.filename else '.csv'
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        content = await file.read()
+        tmp.write(content)
+        tmp_path = Path(tmp.name)
+
+    try:
+        # Read data
+        if suffix.lower() == '.parquet':
+            df = pl.read_parquet(tmp_path)
+        elif suffix.lower() == '.csv':
+            df = pl.read_csv(tmp_path)
+        elif suffix.lower() in ('.xls', '.xlsx'):
+            df = pl.read_excel(tmp_path)
+        else:
+            raise HTTPException(status_code=400, detail=f"Unsupported file type: {suffix}")
+
+        # Create schema info
+        schema = schema_from_dataframe(df, filename=file.filename or "uploaded_file")
+
+        # Get concierge validation
+        concierge = get_concierge()
+        result = concierge.validate_schema(schema)
+
+        return {
+            "report": result.report,
+            "config": result.config,
+            "issues": result.issues,
+            "confidence": result.confidence,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+
+@app.post("/api/concierge/explain-error")
+async def concierge_explain_error(
+    error_message: str = Form(...),
+    error_context: str = Form(""),
+    column_name: str = Form(""),
+    sample_values: str = Form("")  # JSON array
+):
+    """
+    Explain an error in plain language.
+
+    Returns:
+    - summary: What went wrong
+    - cause: Likely cause
+    - fix_steps: How to fix
+    - prevention: How to avoid in future
+    """
+    if not concierge_available():
+        raise HTTPException(
+            status_code=503,
+            detail="Concierge not available. Set ANTHROPIC_API_KEY."
+        )
+
+    try:
+        samples = json.loads(sample_values) if sample_values else []
+    except:
+        samples = []
+
+    concierge = get_concierge()
+    explanation = concierge.explain_error(
+        error_message=error_message,
+        error_context=error_context,
+        column_name=column_name,
+        sample_values=samples
+    )
+
+    return {
+        "summary": explanation.summary,
+        "cause": explanation.cause,
+        "fix_steps": explanation.fix_steps,
+        "prevention": explanation.prevention,
+    }
+
+
+@app.post("/api/concierge/interpret")
+async def concierge_interpret(
+    system_summary: str = Form(...),  # JSON
+    signals: str = Form("[]"),  # JSON array
+    causal: str = Form("[]"),  # JSON array
+    alerts: str = Form("[]"),  # JSON array
+):
+    """
+    Interpret analysis results in plain language.
+
+    Returns:
+    - interpretation: Markdown-formatted explanation
+    """
+    if not concierge_available():
+        raise HTTPException(
+            status_code=503,
+            detail="Concierge not available. Set ANTHROPIC_API_KEY."
+        )
+
+    try:
+        summary = json.loads(system_summary)
+        signal_list = json.loads(signals) if signals else []
+        causal_list = json.loads(causal) if causal else []
+        alert_list = json.loads(alerts) if alerts else []
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid JSON: {e}")
+
+    concierge = get_concierge()
+    interpretation = concierge.interpret_results(
+        system_summary=summary,
+        signal_summaries=signal_list,
+        causal_info=causal_list,
+        alerts=alert_list
+    )
+
+    return {"interpretation": interpretation}
+
+
+@app.post("/api/concierge/ask")
+async def concierge_ask(
+    question: str = Form(...),
+    signals: str = Form("[]"),
+    regimes: str = Form("[]"),
+    causal: str = Form("[]"),
+    alerts: str = Form("[]"),
+    history: str = Form("[]"),  # Previous conversation turns
+):
+    """
+    Answer a question about the analysis.
+
+    Returns:
+    - answer: Response text
+    """
+    if not concierge_available():
+        raise HTTPException(
+            status_code=503,
+            detail="Concierge not available. Set ANTHROPIC_API_KEY."
+        )
+
+    try:
+        signal_list = json.loads(signals) if signals else []
+        regime_list = json.loads(regimes) if regimes else []
+        causal_list = json.loads(causal) if causal else []
+        alert_list = json.loads(alerts) if alerts else []
+        conv_history = json.loads(history) if history else []
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid JSON: {e}")
+
+    concierge = get_concierge()
+    answer = concierge.answer_question(
+        question=question,
+        signal_summaries=signal_list,
+        regime_info=regime_list,
+        causal_info=causal_list,
+        alerts=alert_list,
+        conversation_history=conv_history
+    )
+
+    return {"answer": answer}
+
+
+# =============================================================================
+# SQL WORKFLOW ENDPOINTS (ORTHON SQL Engine)
+# =============================================================================
+# ORTHON SQL handles:
+#   1. observations.parquet - ONLY file ORTHON creates
+#   2. Unit-based classification
+#   3. PRISM work orders
+#   4. Query PRISM results for visualization
+
+import duckdb
+
+
+def _get_sql_path(filename: str) -> Path:
+    """Get path to SQL file."""
+    return Path(__file__).parent / "sql" / filename
+
+
+def _run_sql_file(conn: duckdb.DuckDBPyConnection, filename: str, params: dict = None):
+    """Read and execute a SQL file with optional parameter substitution."""
+    sql_path = _get_sql_path(filename)
+    if not sql_path.exists():
+        raise FileNotFoundError(f"SQL file not found: {sql_path}")
+
+    sql_content = sql_path.read_text()
+
+    # Substitute parameters
+    if params:
+        for key, value in params.items():
+            sql_content = sql_content.replace(f"{{{key}}}", str(value))
+
+    # Execute (split by semicolons for multi-statement)
+    for statement in sql_content.split(';'):
+        statement = statement.strip()
+        if statement and not statement.startswith('--') and not statement.startswith('.read'):
+            try:
+                conn.execute(statement)
+            except Exception:
+                pass  # Skip invalid statements during multi-statement execution
+
+
+@app.post("/api/sql/observations")
+async def sql_create_observations(
+    file: UploadFile = File(...),
+    output_dir: str = Form("output"),
+):
+    """
+    Create observations.parquet from uploaded file.
+
+    This is the ONLY parquet file ORTHON creates.
+    """
+    # Save uploaded file
+    suffix = Path(file.filename).suffix if file.filename else '.csv'
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        content = await file.read()
+        tmp.write(content)
+        input_path = Path(tmp.name)
+
+    try:
+        # Create output directory
+        output_path = Path(output_dir)
+        output_path.mkdir(parents=True, exist_ok=True)
+
+        # Run SQL
+        conn = duckdb.connect()
+        _run_sql_file(conn, "00_observations.sql", {
+            "input_path": str(input_path),
+            "output_path": str(output_path),
+        })
+
+        # Get summary
+        summary = conn.execute("SELECT * FROM v_observations_summary").fetchdf()
+
+        return {
+            "status": "complete",
+            "output_file": str(output_path / "observations.parquet"),
+            "summary": summary.to_dict(orient="records")[0] if len(summary) > 0 else {},
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        input_path.unlink(missing_ok=True)
+
+
+@app.post("/api/sql/classify")
+async def sql_classify_signals(
+    observations_path: str = Form(...),
+):
+    """
+    Classify signals by UNIT only (no compute).
+
+    Returns signal classifications based on unit-to-class mapping.
+    """
+    try:
+        conn = duckdb.connect()
+
+        # Load observations
+        conn.execute(f"CREATE TABLE observations AS SELECT * FROM read_parquet('{observations_path}')")
+
+        # Run classification
+        _run_sql_file(conn, "01_classification_units.sql", {})
+
+        # Get results
+        summary = conn.execute("SELECT * FROM v_signal_class_summary").fetchdf()
+        classes = conn.execute("SELECT * FROM v_signal_class_unit").fetchdf()
+
+        return {
+            "status": "complete",
+            "summary": summary.to_dict(orient="records"),
+            "classifications": classes.to_dict(orient="records"),
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/sql/work-orders")
+async def sql_get_work_orders(
+    observations_path: str = Form(...),
+):
+    """
+    Generate PRISM work orders based on signal classification.
+
+    Returns what PRISM should compute for each signal.
+    """
+    try:
+        conn = duckdb.connect()
+
+        # Load observations
+        conn.execute(f"CREATE TABLE observations AS SELECT * FROM read_parquet('{observations_path}')")
+
+        # Run classification + work orders
+        _run_sql_file(conn, "01_classification_units.sql", {})
+        _run_sql_file(conn, "02_work_orders.sql", {})
+
+        # Get results
+        summary = conn.execute("SELECT * FROM v_work_order_summary").fetchdf()
+        orders = conn.execute("SELECT * FROM v_prism_work_orders").fetchdf()
+
+        return {
+            "status": "complete",
+            "summary": summary.to_dict(orient="records"),
+            "work_orders": orders.to_dict(orient="records"),
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/sql/load-prism-results")
+async def sql_load_prism_results(
+    prism_output: str = Form(...),  # Directory containing PRISM parquet files
+    observations_path: str = Form(None),  # Optional: path to observations.parquet
+):
+    """
+    Load PRISM results for visualization.
+
+    Expects PRISM to have created:
+    - signal_typology.parquet
+    - behavioral_geometry.parquet
+    - dynamical_systems.parquet
+    - causal_mechanics.parquet
+    """
+    prism_path = Path(prism_output)
+    if not prism_path.exists():
+        raise HTTPException(status_code=404, detail=f"PRISM output not found: {prism_output}")
+
+    # Check for expected files
+    expected_files = [
+        "signal_typology.parquet",
+        "behavioral_geometry.parquet",
+        "dynamical_systems.parquet",
+        "causal_mechanics.parquet",
+    ]
+
+    found = {f: (prism_path / f).exists() for f in expected_files}
+    missing = [f for f, exists in found.items() if not exists]
+
+    if missing:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Missing PRISM results: {missing}. PRISM may still be computing."
+        )
+
+    try:
+        conn = duckdb.connect()
+
+        # Load observations if provided
+        if observations_path:
+            conn.execute(f"CREATE TABLE observations AS SELECT * FROM read_parquet('{observations_path}')")
+            _run_sql_file(conn, "01_classification_units.sql", {})
+
+        # Load PRISM results
+        _run_sql_file(conn, "03_load_prism_results.sql", {
+            "prism_output": str(prism_path),
+        })
+
+        # Get verification
+        counts = conn.execute("""
+            SELECT
+                (SELECT COUNT(*) FROM signal_typology) AS typology_rows,
+                (SELECT COUNT(*) FROM behavioral_geometry) AS geometry_rows,
+                (SELECT COUNT(*) FROM dynamical_systems) AS dynamics_rows,
+                (SELECT COUNT(*) FROM causal_mechanics) AS causality_rows
+        """).fetchdf()
+
+        return {
+            "status": "loaded",
+            "prism_output": str(prism_path),
+            "files_found": found,
+            "row_counts": counts.to_dict(orient="records")[0] if len(counts) > 0 else {},
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/sql/dashboard")
+async def sql_get_dashboard(
+    prism_output: str,
+    observations_path: str = None,
+):
+    """
+    Get dashboard data for visualization.
+
+    Returns system health, alerts, and signal summaries.
+    """
+    try:
+        conn = duckdb.connect()
+
+        # Load data
+        if observations_path:
+            conn.execute(f"CREATE TABLE observations AS SELECT * FROM read_parquet('{observations_path}')")
+            _run_sql_file(conn, "01_classification_units.sql", {})
+
+        _run_sql_file(conn, "03_load_prism_results.sql", {"prism_output": prism_output})
+        _run_sql_file(conn, "04_visualization.sql", {})
+        _run_sql_file(conn, "05_summaries.sql", {})
+
+        # Get dashboard data
+        health = conn.execute("SELECT * FROM v_dashboard_system_health").fetchdf()
+        alerts = conn.execute("SELECT * FROM v_dashboard_alerts LIMIT 20").fetchdf()
+        layer_summary = conn.execute("SELECT * FROM v_summary_all_layers").fetchdf()
+
+        return {
+            "system_health": health.to_dict(orient="records")[0] if len(health) > 0 else {},
+            "alerts": alerts.to_dict(orient="records"),
+            "layer_summary": layer_summary.to_dict(orient="records"),
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/sql/signals")
+async def sql_get_signals(
+    prism_output: str,
+    observations_path: str = None,
+):
+    """
+    Get signal analysis cards for the UI.
+    """
+    try:
+        conn = duckdb.connect()
+
+        if observations_path:
+            conn.execute(f"CREATE TABLE observations AS SELECT * FROM read_parquet('{observations_path}')")
+            _run_sql_file(conn, "01_classification_units.sql", {})
+
+        _run_sql_file(conn, "03_load_prism_results.sql", {"prism_output": prism_output})
+        _run_sql_file(conn, "04_visualization.sql", {})
+
+        signals = conn.execute("SELECT * FROM v_dashboard_signal_cards").fetchdf()
+
+        return {
+            "signals": signals.to_dict(orient="records"),
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/sql/correlations")
+async def sql_get_correlations(
+    prism_output: str,
+    min_correlation: float = 0.3,
+):
+    """
+    Get correlation data for heatmap visualization.
+    """
+    try:
+        conn = duckdb.connect()
+
+        _run_sql_file(conn, "03_load_prism_results.sql", {"prism_output": prism_output})
+        _run_sql_file(conn, "04_visualization.sql", {})
+
+        correlations = conn.execute(f"""
+            SELECT * FROM v_chart_correlation_matrix
+            WHERE ABS(correlation) >= {min_correlation}
+        """).fetchdf()
+
+        return {
+            "correlations": correlations.to_dict(orient="records"),
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/sql/causal-graph")
+async def sql_get_causal_graph(
+    prism_output: str,
+):
+    """
+    Get causal graph data (nodes and edges) for visualization.
+    """
+    try:
+        conn = duckdb.connect()
+
+        _run_sql_file(conn, "03_load_prism_results.sql", {"prism_output": prism_output})
+        _run_sql_file(conn, "04_visualization.sql", {})
+
+        nodes = conn.execute("SELECT * FROM v_graph_nodes").fetchdf()
+        edges = conn.execute("SELECT * FROM v_graph_edges").fetchdf()
+
+        return {
+            "nodes": nodes.to_dict(orient="records"),
+            "edges": edges.to_dict(orient="records"),
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 def main():
