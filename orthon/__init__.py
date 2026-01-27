@@ -13,7 +13,8 @@ from orthon.intake import load_file, validate, detect_columns, detect_units
 from orthon.intake import prepare_for_prism, transform_for_prism, IntakeTransformer
 from orthon.shared import PrismConfig, SignalInfo, DISCIPLINES
 from orthon.backend import get_backend, analyze, has_prism, get_backend_info
-from orthon.display import generate_report, to_json, to_csv
+
+# Display module deprecated - using static HTML at /static/index.html
 
 __all__ = [
     # Version
@@ -36,8 +37,4 @@ __all__ = [
     'analyze',
     'has_prism',
     'get_backend_info',
-    # Display
-    'generate_report',
-    'to_json',
-    'to_csv',
 ]
