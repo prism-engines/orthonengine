@@ -14,8 +14,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application
 COPY . .
 
-# Expose port (Railway sets $PORT)
-EXPOSE 8501
+# Railway injects PORT env var - Streamlit will use it
+ENV PORT=8501
 
-# Run Streamlit
-CMD streamlit run orthon/app.py --server.port=${PORT:-8501} --server.address=0.0.0.0
+CMD streamlit run orthon/app.py --server.port=$PORT --server.address=0.0.0.0 --server.headless=true
