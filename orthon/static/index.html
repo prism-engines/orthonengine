@@ -79,7 +79,49 @@
             display: flex;
             flex-direction: column;
             flex-shrink: 0;
+            overflow: hidden;
+        }
+
+        .sidebar-tabs {
+            display: flex;
+            background: var(--bg);
+            border-bottom: 1px solid var(--border);
+            flex-shrink: 0;
+        }
+
+        .sidebar-tab {
+            flex: 1;
+            padding: 0.5rem 0.25rem;
+            background: transparent;
+            border: none;
+            color: var(--dim);
+            font: inherit;
+            font-size: 0.7rem;
+            cursor: pointer;
+            transition: 0.15s;
+            border-bottom: 2px solid transparent;
+        }
+
+        .sidebar-tab:hover {
+            color: var(--text);
+            background: var(--panel);
+        }
+
+        .sidebar-tab.active {
+            color: var(--accent);
+            background: var(--panel);
+            border-bottom-color: var(--accent);
+        }
+
+        .sidebar-panel {
+            display: none;
+            flex-direction: column;
+            flex: 1;
             overflow-y: auto;
+        }
+
+        .sidebar-panel.active {
+            display: flex;
         }
 
         .sidebar-section {
@@ -771,12 +813,19 @@
 
     <main>
         <div class="sidebar">
-            <!-- Upload -->
-            <div class="sidebar-section">
-                <div class="section-title collapsible" onclick="toggleSection(this)">
-                    <span><span class="toggle-icon">▼</span> Data File</span>
-                </div>
-                <div class="section-content">
+            <!-- Sidebar Tabs -->
+            <div class="sidebar-tabs">
+                <button class="sidebar-tab active" onclick="showSidebarTab('inputs')">Inputs</button>
+                <button class="sidebar-tab" onclick="showSidebarTab('analysis')">Analysis</button>
+                <button class="sidebar-tab" onclick="showSidebarTab('results')">Results</button>
+                <button class="sidebar-tab" onclick="showSidebarTab('ai')" id="ai-tab" style="display: none;">AI</button>
+            </div>
+
+            <!-- INPUTS TAB -->
+            <div class="sidebar-panel active" id="sidebar-inputs">
+                <!-- Data File -->
+                <div class="sidebar-section">
+                    <div class="section-title">Data File</div>
                     <div class="upload-zone" id="dropzone" onclick="$('file-input').click()">
                         <div class="upload-icon">📁</div>
                         <div class="upload-text">Drop file or click</div>
@@ -784,31 +833,50 @@
                     <input type="file" id="file-input" accept=".parquet,.csv,.xlsx,.txt,.tsv" onchange="onFile(this)">
                     <div id="file-info" class="file-info" style="display:none"></div>
                 </div>
-            </div>
 
-            <!-- Config File -->
-            <div class="sidebar-section">
-                <div class="section-title collapsible" onclick="toggleSection(this)">
-                    <span><span class="toggle-icon">▼</span> Config File</span>
-                </div>
-                <div class="section-content">
-                    <div class="upload-zone" id="config-dropzone" onclick="$('config-file-input').click()">
-                        <div class="upload-icon">⚙️</div>
+                <!-- Config File -->
+                <div class="sidebar-section">
+                    <div class="section-title">Config File <span style="color: var(--dim); font-weight: normal;">(optional)</span></div>
+                    <div class="upload-zone" id="config-dropzone" onclick="$('config-file-input').click()" style="padding: 0.75rem;">
                         <div class="upload-text">Drop JSON/YAML or click</div>
                     </div>
                     <div id="config-file-info" class="file-info" style="display:none"></div>
                 </div>
-            </div>
 
-            <!-- Inspection Results -->
-            <div class="sidebar-section" id="inspection-section" style="display: none;">
-                <div class="section-title collapsible" onclick="toggleSection(this)">
-                    <span><span class="toggle-icon">▼</span> Detected Structure</span>
-                    <span id="inspection-level" style="font-size: 0.65rem; padding: 0.1rem 0.3rem; background: var(--accent); color: var(--bg); border-radius: 3px;">—</span>
+                <!-- Analysis Settings -->
+                <div class="sidebar-section">
+                    <div class="section-title">Analysis Settings</div>
+                    <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem;">
+                            <div>
+                                <label style="font-size: 0.65rem; color: var(--dim); display: block; margin-bottom: 0.2rem;">Window Size</label>
+                                <input type="number" id="window-size" value="50" min="5" style="width: 100%; background: var(--input); border: 1px solid var(--border); color: var(--text); padding: 0.4rem 0.5rem; border-radius: 4px; font: inherit; font-size: 0.75rem;">
+                            </div>
+                            <div>
+                                <label style="font-size: 0.65rem; color: var(--dim); display: block; margin-bottom: 0.2rem;">Stride</label>
+                                <input type="number" id="window-stride" value="25" min="1" style="width: 100%; background: var(--input); border: 1px solid var(--border); color: var(--text); padding: 0.4rem 0.5rem; border-radius: 4px; font: inherit; font-size: 0.75rem;">
+                            </div>
+                        </div>
+                        <div>
+                            <label style="font-size: 0.65rem; color: var(--dim); display: block; margin-bottom: 0.2rem;">Discipline</label>
+                            <select id="discipline-select" style="width: 100%; background: var(--input); border: 1px solid var(--border); color: var(--text); padding: 0.4rem 0.5rem; border-radius: 4px; font: inherit; font-size: 0.75rem;">
+                                <option value="core" selected>Core Analysis</option>
+                                <option value="thermodynamics">Thermodynamics</option>
+                                <option value="transport">Transport Phenomena</option>
+                                <option value="reaction">Reaction Engineering</option>
+                                <option value="process_control">Process Control</option>
+                                <option value="mechanical">Mechanical Systems</option>
+                                <option value="electrical">Electrical Systems</option>
+                                <option value="fluid_dynamics">Fluid Dynamics</option>
+                            </select>
+                        </div>
+                    </div>
                 </div>
-                <div class="section-content">
-                    <a href="#" onclick="toggleConstants(); return false;" id="constants-toggle" style="font-size: 0.65rem; color: var(--accent); text-decoration: none; display: block; margin-bottom: 0.4rem;">+ Add Constants</a>
-                    <div id="constants-panel" style="display: none; margin-bottom: 0.75rem; padding: 0.5rem; background: var(--input); border-radius: 4px;">
+
+                <!-- Constants -->
+                <div class="sidebar-section">
+                    <div class="section-title">Constants <span style="color: var(--dim); font-weight: normal;">(optional)</span></div>
+                    <div id="constants-panel" style="padding: 0.5rem; background: var(--input); border-radius: 4px;">
                         <div style="display: grid; grid-template-columns: 1fr 80px; gap: 0.3rem; font-size: 0.7rem;">
                             <label style="color: var(--dim); align-self: center;">Density (kg/m³)</label>
                             <input type="number" id="const-density" placeholder="—" style="background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 0.25rem; border-radius: 3px; font: inherit; font-size: 0.7rem;">
@@ -829,61 +897,37 @@
                             <input type="number" id="const-pressure" placeholder="—" style="background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 0.25rem; border-radius: 3px; font: inherit; font-size: 0.7rem;">
                         </div>
                         <div style="margin-top: 0.5rem; font-size: 0.6rem; color: var(--dim);">
-                            Constants unlock physics engines (Reynolds, pressure drop, etc.)
+                            Constants unlock physics engines
                         </div>
                     </div>
+                </div>
+            </div>
+
+            <!-- ANALYSIS TAB -->
+            <div class="sidebar-panel" id="sidebar-analysis">
+                <!-- Detected Structure -->
+                <div class="sidebar-section" id="inspection-section">
+                    <div class="section-title">
+                        Detected Structure
+                        <span id="inspection-level" style="font-size: 0.65rem; padding: 0.1rem 0.3rem; background: var(--accent); color: var(--bg); border-radius: 3px; margin-left: 0.5rem;">—</span>
+                    </div>
                     <div id="inspection-content" style="font-size: 0.7rem;">
-                        <!-- Filled by JS -->
+                        <div style="color: var(--dim);">Load a data file to see structure</div>
                     </div>
                 </div>
-            </div>
 
-            <!-- Load External Results -->
-            <div class="sidebar-section">
-                <div class="section-title collapsible" onclick="toggleSection(this)">
-                    <span><span class="toggle-icon">▶</span> Load Results</span>
-                </div>
-                <div class="section-content" style="display: none;">
-                    <div style="display: flex; flex-direction: column; gap: 0.5rem;">
-                        <label style="font-size: 0.7rem; color: var(--dim);">Results Directory Path</label>
-                        <input type="text" id="results-path-input" placeholder="/Users/.../prism-inbox" style="background: var(--input); border: 1px solid var(--border); color: var(--text); padding: 0.4rem 0.5rem; border-radius: 4px; font: inherit; font-size: 0.75rem;">
-                        <button class="btn" onclick="loadExternalResults()" style="width: 100%;">Load Parquets</button>
-                        <div id="load-results-status" style="font-size: 0.7rem; color: var(--dim);"></div>
+                <!-- Capabilities -->
+                <div class="sidebar-section">
+                    <div class="section-title">
+                        Capabilities
+                        <span id="cap-count" style="margin-left: 0.5rem;">—</span>
                     </div>
+                    <div class="cap-list" id="caps"></div>
                 </div>
-            </div>
 
-            <!-- Download Results -->
-            <div class="sidebar-section" id="download-section" style="display: none;">
-                <button class="btn" onclick="downloadResults()" style="width: 100%;">Download Results (.zip)</button>
-            </div>
-
-            <!-- PRISM Analysis -->
-            <div class="sidebar-section">
-                <div class="section-title collapsible" onclick="toggleSection(this)">
-                    <span><span class="toggle-icon">▼</span> PRISM Analysis</span>
-                </div>
-                <div class="section-content">
-                    <div style="display: flex; flex-direction: column; gap: 0.5rem;">
-                        <label style="font-size: 0.7rem; color: var(--dim);">Discipline</label>
-                        <select id="discipline-select" style="background: var(--input); border: 1px solid var(--border); color: var(--text); padding: 0.4rem 0.5rem; border-radius: 4px; font: inherit; font-size: 0.75rem;">
-                            <option value="core" selected>Core Analysis</option>
-                            <option value="thermodynamics">Thermodynamics</option>
-                            <option value="transport">Transport Phenomena</option>
-                            <option value="reaction">Reaction Engineering</option>
-                            <option value="process_control">Process Control</option>
-                            <option value="mechanical">Mechanical Systems</option>
-                            <option value="electrical">Electrical Systems</option>
-                            <option value="fluid_dynamics">Fluid Dynamics</option>
-                        </select>
-                        <label style="font-size: 0.7rem; color: var(--dim);">Window Size</label>
-                        <input type="number" id="window-size" value="50" min="5" style="background: var(--input); border: 1px solid var(--border); color: var(--text); padding: 0.4rem 0.5rem; border-radius: 4px; font: inherit; font-size: 0.75rem;">
-                        <label style="font-size: 0.7rem; color: var(--dim);">Window Stride</label>
-                        <input type="number" id="window-stride" value="25" min="1" style="background: var(--input); border: 1px solid var(--border); color: var(--text); padding: 0.4rem 0.5rem; border-radius: 4px; font: inherit; font-size: 0.75rem;">
-                    </div>
-                    <div class="actions">
-                        <button class="btn btn-primary" id="analyze-btn" onclick="analyzeWithPRISM()" disabled>Analyze with PRISM</button>
-                    </div>
+                <!-- Analyze Button -->
+                <div class="sidebar-section">
+                    <button class="btn btn-primary" id="analyze-btn" onclick="analyzeWithPRISM()" disabled style="width: 100%;">Analyze with PRISM</button>
                     <div id="prism-progress" style="display: none; margin-top: 0.5rem;">
                         <div class="loading">
                             <div class="spinner"></div>
@@ -893,29 +937,35 @@
                 </div>
             </div>
 
-            <!-- Capabilities -->
-            <div class="sidebar-section">
-                <div class="section-title collapsible" onclick="toggleSection(this)">
-                    <span><span class="toggle-icon">▼</span> Capabilities</span>
-                    <span id="cap-count">—</span>
+            <!-- RESULTS TAB -->
+            <div class="sidebar-panel" id="sidebar-results">
+                <!-- Load External Results -->
+                <div class="sidebar-section">
+                    <div class="section-title">Load External Results</div>
+                    <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+                        <input type="text" id="results-path-input" placeholder="/path/to/prism-results" style="background: var(--input); border: 1px solid var(--border); color: var(--text); padding: 0.4rem 0.5rem; border-radius: 4px; font: inherit; font-size: 0.75rem;">
+                        <button class="btn" onclick="loadExternalResults()" style="width: 100%;">Load Parquets</button>
+                        <div id="load-results-status" style="font-size: 0.7rem; color: var(--dim);"></div>
+                    </div>
                 </div>
-                <div class="section-content">
-                    <div class="cap-list" id="caps"></div>
-                </div>
-            </div>
 
-            <!-- Create Markdowns -->
-            <div class="sidebar-section">
-                <div class="section-title collapsible" onclick="toggleSection(this)">
-                    <span><span class="toggle-icon">▶</span> Create Markdowns</span>
-                    <span id="md-count">0 selected</span>
+                <!-- Download Results -->
+                <div class="sidebar-section" id="download-section" style="display: none;">
+                    <div class="section-title">Download</div>
+                    <button class="btn" onclick="downloadResults()" style="width: 100%;">Download Results (.zip)</button>
                 </div>
-                <div class="section-content" style="display: none;">
+
+                <!-- Create Markdowns -->
+                <div class="sidebar-section">
+                    <div class="section-title">
+                        Create Markdowns
+                        <span id="md-count" style="margin-left: 0.5rem; color: var(--dim);">0 selected</span>
+                    </div>
                     <div style="display: flex; gap: 0.5rem; margin-bottom: 0.5rem;">
                         <button class="btn btn-sm" onclick="selectAllMarkdowns(true)" style="flex:1;">All</button>
                         <button class="btn btn-sm" onclick="selectAllMarkdowns(false)" style="flex:1;">None</button>
                     </div>
-                    <div class="cap-list" id="markdown-list"></div>
+                    <div class="cap-list" id="markdown-list" style="max-height: 200px; overflow-y: auto;"></div>
                     <div class="actions" style="margin-top: 0.5rem;">
                         <button class="btn btn-primary" onclick="generateMarkdowns()" style="width: 100%;">Generate Markdowns</button>
                     </div>
@@ -923,13 +973,14 @@
                 </div>
             </div>
 
-            <!-- AI Concierge -->
-            <div class="sidebar-section concierge-section" id="concierge-section" style="display: none;">
-                <div class="section-title collapsible" onclick="toggleSection(this)">
-                    <span><span class="toggle-icon">▼</span> AI Concierge</span>
-                    <span id="concierge-badge" style="font-size: 0.6rem; padding: 0.1rem 0.3rem; background: var(--purple); color: var(--bg); border-radius: 3px;">AI</span>
-                </div>
-                <div class="section-content">
+            <!-- AI TAB -->
+            <div class="sidebar-panel" id="sidebar-ai">
+                <div class="sidebar-section concierge-section" id="concierge-section">
+                    <div class="section-title">
+                        AI Concierge
+                        <span id="concierge-badge" style="font-size: 0.6rem; padding: 0.1rem 0.3rem; background: var(--purple); color: var(--bg); border-radius: 3px; margin-left: 0.5rem;">AI</span>
+                    </div>
+
                     <!-- Validation Report -->
                     <div id="concierge-validation-panel" class="concierge-panel" style="display: none;">
                         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.3rem;">
@@ -965,13 +1016,13 @@
                     </div>
 
                     <!-- Ready Message (shown when AI available but no file) -->
-                    <div id="concierge-ready" style="font-size: 0.7rem; color: var(--dim); display: none;">
+                    <div id="concierge-ready" style="font-size: 0.7rem; color: var(--dim);">
                         <span style="color: var(--green);">✓ AI Ready</span>
                         <div style="margin-top: 0.3rem; font-size: 0.65rem;">Upload a file to analyze with AI</div>
                     </div>
 
                     <!-- No API Key Message -->
-                    <div id="concierge-unavailable" style="font-size: 0.7rem; color: var(--dim);">
+                    <div id="concierge-unavailable" style="font-size: 0.7rem; color: var(--dim); display: none;">
                         <span>AI assistance unavailable</span>
                         <div style="margin-top: 0.3rem; font-size: 0.65rem;">Set ANTHROPIC_API_KEY to enable</div>
                     </div>
@@ -1507,6 +1558,21 @@ window.showView = function(view) {
     if (view === 'readme' && !readmeLoaded) {
         loadReadme();
     }
+};
+
+// =====================================================================
+// SIDEBAR TAB NAVIGATION
+// =====================================================================
+
+window.showSidebarTab = function(tab) {
+    // Update tab buttons
+    document.querySelectorAll('.sidebar-tab').forEach(t => t.classList.remove('active'));
+    event.target.classList.add('active');
+
+    // Update panels
+    document.querySelectorAll('.sidebar-panel').forEach(p => p.classList.remove('active'));
+    const panel = $('sidebar-' + tab);
+    if (panel) panel.classList.add('active');
 };
 
 // =====================================================================
@@ -2833,21 +2899,8 @@ window.loadExternalResults = async function() {
 };
 
 // =====================================================================
-// CONSTANTS PANEL
+// SIGNALS TOGGLE
 // =====================================================================
-
-window.toggleConstants = function() {
-    const panel = $('constants-panel');
-    const toggle = $('constants-toggle');
-
-    if (panel.style.display === 'none') {
-        panel.style.display = 'block';
-        toggle.textContent = '− Hide Constants';
-    } else {
-        panel.style.display = 'none';
-        toggle.textContent = '+ Add Constants';
-    }
-};
 
 window.toggleSignals = function() {
     const more = $('signals-more');
@@ -3268,21 +3321,25 @@ async function checkConcierge() {
         const data = await r.json();
         conciergeAvailable = data.available;
 
+        // Show/hide AI tab in sidebar
+        const aiTab = $('ai-tab');
+
         if (conciergeAvailable) {
             setSt('concierge', 'Ready', 'ok');
-            $('concierge-section').style.display = 'block';
+            if (aiTab) aiTab.style.display = 'block';
             $('concierge-unavailable').style.display = 'none';
             $('concierge-ready').style.display = 'block';
         } else {
             setSt('concierge', 'No API Key', 'warn');
-            $('concierge-section').style.display = 'block';
+            if (aiTab) aiTab.style.display = 'block';  // Still show tab, but with message
             $('concierge-unavailable').style.display = 'block';
             $('concierge-ready').style.display = 'none';
             $('concierge-chat').style.display = 'none';
         }
     } catch (e) {
         setSt('concierge', 'Unavailable', 'err');
-        $('concierge-section').style.display = 'none';
+        const aiTab = $('ai-tab');
+        if (aiTab) aiTab.style.display = 'none';
     }
 }
 
