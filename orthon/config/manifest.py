@@ -2,12 +2,12 @@
 ORTHON Manifest Configuration
 
 ONE file. ALL engines. NO exceptions.
+Simple. Sequential. No RAM management.
 
 This is the single source of truth for:
 - ENGINES list (all engines, always enabled)
 - Pydantic models for manifest structure
 - Factory functions for creating manifests
-- Validation to ensure full compute
 """
 
 from pydantic import BaseModel, Field
@@ -93,43 +93,18 @@ ENGINES = [
 
 
 # =============================================================================
-# DEFAULT CONFIG - ALL engines enabled, NO exceptions
+# DEFAULT CONFIG - ALL engines enabled
 # =============================================================================
 
 DEFAULT_PRISM_CONFIG = {
     "engines": {engine: True for engine in ENGINES},
-    "compute": {
-        "skip_engines": [],       # EMPTY - never skip
-        "skip_metrics": [],       # EMPTY - never skip
-        "insufficient_data": "nan",   # Return NaN, don't skip
-    },
-    "ram": {
-        "batch_size": "auto",     # Auto-tune based on available RAM
-        "flush_interval": 100,    # Entities before flush
-        "clear_cache": True,      # Clear after each batch
-        "max_memory_pct": 0.8,    # Use max 80% of available RAM
-    }
+    "insufficient_data": "nan",  # Return NaN, don't skip
 }
 
 
 # =============================================================================
 # PYDANTIC MODELS
 # =============================================================================
-
-class RAMConfig(BaseModel):
-    """RAM management configuration."""
-    batch_size: int | str = "auto"
-    flush_interval: int = 100
-    clear_cache: bool = True
-    max_memory_pct: float = 0.8
-
-
-class ComputeConfig(BaseModel):
-    """Compute settings - enforces FULL compute."""
-    skip_engines: List[str] = Field(default_factory=list)  # Should always be empty
-    skip_metrics: List[str] = Field(default_factory=list)  # Should always be empty
-    insufficient_data: str = "nan"  # Return NaN, never skip
-
 
 class WindowConfig(BaseModel):
     """Window/stride configuration for PRISM analysis."""
@@ -140,16 +115,9 @@ class WindowConfig(BaseModel):
 
 class EngineManifestEntry(BaseModel):
     """Specification for a single engine execution."""
-
     name: str = Field(..., description="Engine name (matches ENGINES)")
-    output: str = Field(
-        "vector",
-        description="Output parquet file: vector, dynamics, geometry, pairs, physics"
-    )
-    granularity: str = Field(
-        "signal",
-        description="Output granularity: signal, observation, pair_directional, pair_symmetric"
-    )
+    output: str = Field("vector", description="Output parquet file")
+    granularity: str = Field("signal", description="Output granularity")
     groupby: List[str] = Field(default_factory=list)
     orderby: List[str] = Field(default_factory=lambda: ["I"])
     input_columns: List[str] = Field(default_factory=lambda: ["I", "y"])
@@ -161,7 +129,6 @@ class EngineManifestEntry(BaseModel):
 
 class ManifestMetadata(BaseModel):
     """Metadata about the input data."""
-
     entity_count: int = Field(0, description="Number of unique entities")
     signal_count: int = Field(0, description="Number of unique signals")
     observation_count: int = Field(0, description="Total observations")
@@ -186,19 +153,17 @@ class DataConfig(BaseModel):
 class DatasetConfig(BaseModel):
     """Dataset identification."""
     name: str
-    domain: str = "universal"  # No domain-specific anything
+    domain: str = "universal"
     description: Optional[str] = None
 
 
 class PRISMConfig(BaseModel):
     """PRISM execution configuration - FULL compute."""
-
     window: WindowConfig = Field(default_factory=WindowConfig)
     engines: Dict[str, bool] = Field(
         default_factory=lambda: {e: True for e in ENGINES}
     )
-    compute: ComputeConfig = Field(default_factory=ComputeConfig)
-    ram: RAMConfig = Field(default_factory=RAMConfig)
+    insufficient_data: str = "nan"
     constants: Dict[str, Any] = Field(default_factory=dict)
 
 
@@ -206,7 +171,7 @@ class Manifest(BaseModel):
     """
     Complete ORTHON/PRISM job manifest.
 
-    Single source of truth. ALL engines. NO exceptions.
+    Single source of truth. ALL engines. Sequential execution.
     """
 
     # Identifiers
@@ -298,7 +263,7 @@ def create_manifest(
     """
     Create manifest with FULL compute enabled.
 
-    ALL engines. No exceptions.
+    ALL engines. Sequential execution.
     """
     return Manifest(
         dataset=DatasetConfig(name=name),
@@ -335,44 +300,6 @@ def generate_full_manifest(
 
 
 # =============================================================================
-# VALIDATION
-# =============================================================================
-
-def validate_manifest(manifest: Union[dict, Manifest]) -> tuple[bool, List[str]]:
-    """
-    Validate manifest ensures FULL compute.
-
-    Returns:
-        (is_valid, list of warnings/errors)
-    """
-    if isinstance(manifest, Manifest):
-        manifest = manifest.model_dump()
-
-    issues = []
-    prism = manifest.get("prism", {})
-
-    # Check no engines are disabled
-    engines = prism.get("engines", {})
-    disabled = [e for e, enabled in engines.items() if not enabled]
-    if disabled:
-        issues.append(f"WARNING: Engines disabled (violates full compute): {disabled}")
-
-    # Check no skip lists
-    compute = prism.get("compute", {})
-    if compute.get("skip_engines"):
-        issues.append(f"ERROR: skip_engines is not empty: {compute['skip_engines']}")
-    if compute.get("skip_metrics"):
-        issues.append(f"ERROR: skip_metrics is not empty: {compute['skip_metrics']}")
-
-    # Check insufficient_data handling
-    if compute.get("insufficient_data") != "nan":
-        issues.append(f"WARNING: insufficient_data should be 'nan', got '{compute.get('insufficient_data')}'")
-
-    is_valid = not any(issue.startswith("ERROR") for issue in issues)
-    return is_valid, issues
-
-
-# =============================================================================
 # EXPORTS
 # =============================================================================
 
@@ -383,21 +310,16 @@ __all__ = [
 
     # Pydantic models
     "Manifest",
-    "PrismManifest",  # Alias
+    "PrismManifest",
     "PRISMConfig",
     "DataConfig",
     "DatasetConfig",
     "WindowConfig",
-    "WindowManifest",  # Alias
-    "RAMConfig",
-    "ComputeConfig",
+    "WindowManifest",
     "EngineManifestEntry",
     "ManifestMetadata",
 
     # Factory functions
     "create_manifest",
     "generate_full_manifest",
-
-    # Validation
-    "validate_manifest",
 ]

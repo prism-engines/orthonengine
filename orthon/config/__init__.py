@@ -13,15 +13,11 @@ from .manifest import (
     DatasetConfig,
     WindowConfig,
     WindowManifest,
-    RAMConfig,
-    ComputeConfig,
     EngineManifestEntry,
     ManifestMetadata,
     # Factory functions
     create_manifest,
     generate_full_manifest,
-    # Validation
-    validate_manifest,
 )
 from .domains import (
     DOMAINS,
@@ -51,13 +47,10 @@ __all__ = [
     "DatasetConfig",
     "WindowConfig",
     "WindowManifest",
-    "RAMConfig",
-    "ComputeConfig",
     "EngineManifestEntry",
     "ManifestMetadata",
     "create_manifest",
     "generate_full_manifest",
-    "validate_manifest",
     # Recommender
     "ConfigRecommender",
     "ConfigRecommendation",
