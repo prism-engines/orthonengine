@@ -81,6 +81,18 @@ ENTITY_PATTERNS = [
     'engine_id', 'pump_id', 'well_id', 'tag', 'id', 'unit',
 ]
 
+# =============================================================================
+# LABEL DETECTION (for ground truth / tuning)
+# =============================================================================
+
+# Columns that indicate ground truth labels for tuning/validation
+LABEL_PATTERNS = [
+    'anomaly', 'changepoint', 'label', 'fault', 'ground_truth',
+    'event', 'marker', 'rul', 'remaining_useful_life', 'failure',
+    'is_anomaly', 'is_fault', 'target', 'class', 'fault_type',
+    'anomaly_type', 'event_type', 'y_true', 'true_label',
+]
+
 
 def detect_unit(col_name: str) -> Optional[str]:
     """Detect unit from column name suffix"""
@@ -109,6 +121,26 @@ def is_sequence_column(col_name: str) -> bool:
 def is_entity_column(col_name: str) -> bool:
     """Check if column is an entity grouping column"""
     return str(col_name).lower() in ENTITY_PATTERNS
+
+
+def is_label_column(col_name: str) -> bool:
+    """
+    Check if column is a label/ground truth column.
+
+    Label columns contain ground truth for tuning:
+    - anomaly flags (0/1 or True/False)
+    - changepoint markers
+    - fault type labels
+    - remaining useful life (RUL)
+
+    These are preserved separately during intake for validation.
+    """
+    name_lower = str(col_name).lower()
+    # Exact match
+    if name_lower in LABEL_PATTERNS:
+        return True
+    # Partial match (e.g., "anomaly_flag", "is_anomaly_v2")
+    return any(pattern in name_lower for pattern in LABEL_PATTERNS)
 
 
 # =============================================================================
@@ -176,6 +208,13 @@ class IntakeTransformer:
 
         observations_df.to_parquet(obs_path, index=False)
         self._config.to_json(config_path)
+
+        # Write labels.parquet if ground truth columns detected
+        labels_path = None
+        if structure['label_columns']:
+            labels_df = self._to_labels_format(df, structure)
+            labels_path = output_dir / "labels.parquet"
+            labels_df.to_parquet(labels_path, index=False)
 
         return obs_path, config_path
 
@@ -250,7 +289,7 @@ class IntakeTransformer:
         return df, header_constants
 
     def _detect_structure(self, df: pd.DataFrame) -> dict:
-        """Detect data structure: sequence column, entity column, signals"""
+        """Detect data structure: sequence column, entity column, signals, labels"""
 
         structure = {
             'sequence_column': None,
@@ -258,6 +297,7 @@ class IntakeTransformer:
             'entity_column': None,
             'signal_columns': [],
             'constant_columns': [],
+            'label_columns': [],  # Ground truth labels for tuning
         }
 
         # Find sequence column
@@ -285,6 +325,12 @@ class IntakeTransformer:
         # Classify remaining columns
         for col in df.columns:
             if col == structure['sequence_column'] or col == structure['entity_column']:
+                continue
+
+            # Check for label columns FIRST (before numeric check)
+            # Labels can be numeric (0/1) or string ('anomaly', 'normal')
+            if is_label_column(col):
+                structure['label_columns'].append(col)
                 continue
 
             if not pd.api.types.is_numeric_dtype(df[col]):
@@ -470,6 +516,74 @@ class IntakeTransformer:
 
         return observations_df
 
+    def _to_labels_format(self, df: pd.DataFrame, structure: dict) -> pd.DataFrame:
+        """
+        Transform label columns to labels.parquet schema.
+
+        Labels are ground truth for tuning/validation:
+        - anomaly flags (0/1)
+        - changepoint markers
+        - fault type labels
+        - remaining useful life (RUL)
+
+        Schema:
+            entity_id: STRING
+            I: FLOAT64 (index value)
+            label_name: STRING (column name)
+            label_value: STRING (the actual label, coerced to string)
+        """
+        records = []
+
+        # Get sequence values (same logic as observations)
+        if structure['sequence_column']:
+            seq_col = df[structure['sequence_column']]
+            if pd.api.types.is_datetime64_any_dtype(seq_col):
+                sequence_values = (seq_col - seq_col.min()).dt.total_seconds().values
+            elif seq_col.dtype == object:
+                try:
+                    dt_col = pd.to_datetime(seq_col)
+                    sequence_values = (dt_col - dt_col.min()).dt.total_seconds().values
+                except Exception:
+                    try:
+                        sequence_values = seq_col.astype(float).values
+                    except Exception:
+                        sequence_values = np.arange(len(df), dtype=float)
+            else:
+                sequence_values = seq_col.values.astype(float)
+        else:
+            sequence_values = np.arange(len(df), dtype=float)
+
+        # Get entity values
+        if structure['entity_column']:
+            entity_values = df[structure['entity_column']].values
+        else:
+            entity_values = np.full(len(df), "default")
+
+        # Transform each label column
+        for label_col in structure['label_columns']:
+            values = df[label_col].values
+
+            for i in range(len(df)):
+                if pd.notna(values[i]):
+                    records.append({
+                        'entity_id': str(entity_values[i]),
+                        'I': float(sequence_values[i]),
+                        'label_name': label_col,
+                        'label_value': str(values[i]),
+                    })
+
+        labels_df = pd.DataFrame(records)
+
+        if len(labels_df) > 0:
+            labels_df = labels_df.astype({
+                'entity_id': 'string',
+                'I': 'float64',
+                'label_name': 'string',
+                'label_value': 'string',
+            })
+
+        return labels_df
+
 
 # =============================================================================
 # CONVENIENCE FUNCTIONS
@@ -528,4 +642,6 @@ __all__ = [
     'DISCIPLINES',
     'detect_unit',
     'strip_unit_suffix',
+    'is_label_column',
+    'LABEL_PATTERNS',
 ]

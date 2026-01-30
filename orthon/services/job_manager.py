@@ -2,17 +2,22 @@
 ORTHON Job Manager
 ==================
 
-Manages job lifecycle for compute requests.
+Manages job lifecycle for compute requests with queue support.
 
 Job States:
-- pending: Job created, not yet submitted
+- pending: Job created, waiting in queue
 - submitting: Sending to PRISM
-- queued: PRISM accepted the job
+- queued: PRISM accepted the job (legacy)
 - running: PRISM is computing
 - fetching: PRISM done, Orthon fetching parquets
 - processing: Orthon joining/analyzing results
 - complete: Done
 - failed: Error occurred
+
+Queue Behavior:
+- Only one job runs at a time
+- New jobs are queued if a job is already running
+- Queue is processed FIFO
 """
 
 import os
@@ -21,9 +26,11 @@ import uuid
 from enum import Enum
 from pathlib import Path
 from datetime import datetime
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Callable
 from dataclasses import dataclass, field, asdict
 import threading
+from queue import Queue
+import asyncio
 
 
 class JobStatus(str, Enum):
@@ -83,10 +90,15 @@ class Job:
 
 class JobManager:
     """
-    Manages job lifecycle.
+    Manages job lifecycle with queue support.
 
     Uses file-based storage for simplicity.
     Can be swapped to database (PostgreSQL, SQLite) for production.
+
+    Queue Behavior:
+    - Only one job runs at a time (single PRISM worker)
+    - New jobs are queued if a job is already running
+    - Queue is processed FIFO
     """
 
     def __init__(self, jobs_dir: Optional[str] = None):
@@ -103,6 +115,11 @@ class JobManager:
 
         self.jobs_dir.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
+
+        # Queue state
+        self._current_job_id: Optional[str] = None
+        self._job_queue: List[str] = []  # List of job_ids waiting
+        self._queue_lock = threading.Lock()
 
     def _job_path(self, job_id: str) -> Path:
         """Get path to job file."""
@@ -319,6 +336,134 @@ class JobManager:
         with self._lock:
             with open(job_path, 'w') as f:
                 json.dump(job.to_dict(), f, indent=2, default=str)
+
+    # =========================================================================
+    # QUEUE MANAGEMENT
+    # =========================================================================
+
+    def is_job_running(self) -> bool:
+        """Check if a job is currently running."""
+        with self._queue_lock:
+            return self._current_job_id is not None
+
+    def get_current_job(self) -> Optional[Job]:
+        """Get the currently running job."""
+        with self._queue_lock:
+            if self._current_job_id:
+                return self.get_job(self._current_job_id)
+            return None
+
+    def get_queue_position(self, job_id: str) -> int:
+        """
+        Get position of a job in the queue.
+
+        Returns:
+            Position (0 = running, 1+ = waiting), -1 if not found
+        """
+        with self._queue_lock:
+            if self._current_job_id == job_id:
+                return 0
+            try:
+                return self._job_queue.index(job_id) + 1
+            except ValueError:
+                return -1
+
+    def get_queue_length(self) -> int:
+        """Get number of jobs waiting in queue (not including running job)."""
+        with self._queue_lock:
+            return len(self._job_queue)
+
+    def get_queue_status(self) -> Dict[str, Any]:
+        """
+        Get full queue status.
+
+        Returns:
+            {
+                "running": job_id or None,
+                "queued": [job_ids...],
+                "queue_length": int
+            }
+        """
+        with self._queue_lock:
+            return {
+                "running": self._current_job_id,
+                "queued": list(self._job_queue),
+                "queue_length": len(self._job_queue),
+            }
+
+    def enqueue_job(self, job_id: str) -> Dict[str, Any]:
+        """
+        Add a job to the queue.
+
+        If no job is running, the job starts immediately.
+        Otherwise, it's added to the queue.
+
+        Args:
+            job_id: Job to enqueue
+
+        Returns:
+            {
+                "status": "running" | "queued",
+                "position": int (0 if running, 1+ if queued)
+            }
+        """
+        with self._queue_lock:
+            if self._current_job_id is None:
+                # No job running, start immediately
+                self._current_job_id = job_id
+                self.update_status(job_id, JobStatus.RUNNING)
+                return {"status": "running", "position": 0}
+            else:
+                # Add to queue
+                self._job_queue.append(job_id)
+                position = len(self._job_queue)
+                return {"status": "queued", "position": position}
+
+    def complete_current_job(self, status: JobStatus = JobStatus.COMPLETE) -> Optional[str]:
+        """
+        Mark current job as complete and start next in queue.
+
+        Args:
+            status: Final status (COMPLETE or FAILED)
+
+        Returns:
+            job_id of the next job to run, or None if queue empty
+        """
+        with self._queue_lock:
+            if self._current_job_id:
+                # Update the completed job
+                self.update_status(self._current_job_id, status)
+                self._current_job_id = None
+
+            # Start next job in queue
+            if self._job_queue:
+                next_job_id = self._job_queue.pop(0)
+                self._current_job_id = next_job_id
+                self.update_status(next_job_id, JobStatus.RUNNING)
+                return next_job_id
+
+            return None
+
+    def cancel_job(self, job_id: str) -> bool:
+        """
+        Cancel a queued job (cannot cancel running job).
+
+        Args:
+            job_id: Job to cancel
+
+        Returns:
+            True if cancelled, False if not found or running
+        """
+        with self._queue_lock:
+            if job_id == self._current_job_id:
+                return False  # Cannot cancel running job
+
+            if job_id in self._job_queue:
+                self._job_queue.remove(job_id)
+                self.update_status(job_id, JobStatus.FAILED, error="Cancelled by user")
+                return True
+
+            return False
 
 
 # =============================================================================

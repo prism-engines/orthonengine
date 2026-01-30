@@ -73,50 +73,55 @@ class PRISMClient:
 
     def compute(
         self,
-        config: Dict[str, Any],
         observations_path: str,
-        output_dir: Optional[str] = None,
+        manifest: Dict[str, Any],
     ) -> Dict[str, Any]:
         """
-        Send compute request to PRISM (legacy method).
+        Send compute request to PRISM.
 
         Args:
-            config: Config dict (discipline, entities, signals, constants, window)
-            observations_path: Path to observations.parquet (or raw CSV)
-            output_dir: Where PRISM should write results (optional)
+            observations_path: Path to observations.parquet
+            manifest: Manifest dict with engines, params, etc.
 
         Returns:
             {
                 "status": "complete",
-                "results_path": "/path/to/results/",
-                "parquets": ["vector.parquet", "dynamics.parquet", ...]
+                "job_id": "...",
+                "files": ["signal.parquet", ...],
+                "file_urls": ["/results/job_id/signal.parquet", ...]
             }
             or
             {
                 "status": "error",
-                "message": "...",
-                "hint": "..."  # optional
+                "message": "..."
             }
         """
-        payload = {
-            "config": config,
-            "observations_path": observations_path,
-        }
-        if output_dir:
-            payload["output_dir"] = output_dir
+        observations_path = Path(observations_path)
+        if not observations_path.exists():
+            return {
+                "status": "error",
+                "message": f"Observations file not found: {observations_path}",
+            }
 
         try:
-            r = self.client.post(
-                f"{self.base_url}/compute",
-                json=payload,
-            )
+            # Send as multipart form
+            with open(observations_path, 'rb') as obs_file:
+                files = {
+                    'observations': ('observations.parquet', obs_file, 'application/octet-stream'),
+                    'manifest': ('manifest.json', json.dumps(manifest), 'application/json'),
+                }
+                r = self.client.post(
+                    f"{self.base_url}/compute",
+                    files=files,
+                )
+
             return r.json()
 
         except httpx.ConnectError:
             return {
                 "status": "error",
                 "message": "Cannot connect to PRISM. Is it running on port 8100?",
-                "hint": "Start PRISM: cd prism && python -m prism.api",
+                "hint": "Start PRISM: cd prism && uvicorn prism.server.routes:app --port 8100",
             }
         except httpx.TimeoutException:
             return {

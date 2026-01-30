@@ -20,7 +20,7 @@ import json
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 import polars as pl
 
 from orthon.data_reader import DataReader, DataProfile
@@ -37,6 +37,14 @@ from orthon.shared import DISCIPLINES
 from orthon.prism_client import get_prism_client, prism_status
 from orthon.inspection import inspect_file, detect_capabilities, validate_results
 from orthon.utils.index_detection import IndexDetector, detect_index, get_index_detection_prompt
+from orthon.services.job_manager import get_job_manager, JobStatus
+from orthon.services.state_analyzer import get_state_analyzer, StateThresholds
+from orthon.services.physics_interpreter import (
+    get_physics_interpreter,
+    set_physics_config,
+    PhysicsInterpreter,
+)
+from orthon.shared.physics_constants import PhysicsConstants
 
 
 # Store last results path for serving
@@ -438,99 +446,756 @@ async def prism_health():
     return prism_status()
 
 
+@app.get("/api/prism/queue")
+async def get_queue_status():
+    """
+    Get job queue status.
+
+    Returns:
+        {
+            "running": job_id or null,
+            "queued": [job_ids...],
+            "queue_length": int,
+            "current_job": job details or null
+        }
+    """
+    manager = get_job_manager()
+    status = manager.get_queue_status()
+
+    # Add current job details if running
+    if status["running"]:
+        current = manager.get_job(status["running"])
+        if current:
+            status["current_job"] = {
+                "job_id": current.job_id,
+                "status": current.status.value,
+                "created_at": current.created_at,
+            }
+
+    return status
+
+
+@app.get("/api/prism/job/{job_id}")
+async def get_job_status(job_id: str):
+    """
+    Get status of a specific job.
+
+    Returns:
+        Job details including queue position if queued
+    """
+    manager = get_job_manager()
+    job = manager.get_job(job_id)
+
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    result = job.to_dict()
+    result["queue_position"] = manager.get_queue_position(job_id)
+
+    return result
+
+
+@app.delete("/api/prism/job/{job_id}")
+async def cancel_job(job_id: str):
+    """
+    Cancel a queued job.
+
+    Cannot cancel a job that is already running.
+    """
+    manager = get_job_manager()
+
+    if manager.cancel_job(job_id):
+        return {"status": "cancelled", "job_id": job_id}
+    else:
+        job = manager.get_job(job_id)
+        if job and job.status == JobStatus.RUNNING:
+            raise HTTPException(status_code=400, detail="Cannot cancel running job")
+        raise HTTPException(status_code=404, detail="Job not found in queue")
+
+
+# =============================================================================
+# STATE ANALYSIS ENDPOINTS
+# =============================================================================
+
+@app.get("/api/state/current/{entity_id}")
+async def get_current_state(entity_id: str, job_id: str = None, path: str = None):
+    """
+    Get current state for an entity.
+
+    Args:
+        entity_id: Entity identifier
+        job_id: Job ID to look up state.parquet
+        path: Or provide path to state.parquet directly
+    """
+    try:
+        analyzer = get_state_analyzer(job_id=job_id, state_path=path)
+        state = analyzer.get_current_state(entity_id)
+
+        if not state:
+            raise HTTPException(404, f"No state data for {entity_id}")
+
+        return state
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.get("/api/state/trajectory/{entity_id}")
+async def get_state_trajectory(
+    entity_id: str,
+    job_id: str = None,
+    path: str = None,
+    start_I: float = None,
+    end_I: float = None
+):
+    """Get state trajectory over time."""
+    try:
+        analyzer = get_state_analyzer(job_id=job_id, state_path=path)
+        df = analyzer.get_state_trajectory(entity_id, start_I, end_I)
+
+        return {
+            "entity_id": entity_id,
+            "n_points": df.height,
+            "data": df.to_dicts()
+        }
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.get("/api/state/transitions/{entity_id}")
+async def get_state_transitions(
+    entity_id: str,
+    job_id: str = None,
+    path: str = None,
+    velocity_threshold: float = None
+):
+    """Find state transitions (degradation/recovery events)."""
+    try:
+        analyzer = get_state_analyzer(job_id=job_id, state_path=path)
+        transitions = analyzer.find_transitions(entity_id, velocity_threshold)
+
+        return {
+            "entity_id": entity_id,
+            "n_transitions": len(transitions),
+            "transitions": transitions
+        }
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.get("/api/state/anomalies")
+async def get_state_anomalies(
+    job_id: str = None,
+    path: str = None,
+    entity_id: str = None,
+    distance_threshold: float = None
+):
+    """Find all anomalous states."""
+    try:
+        analyzer = get_state_analyzer(job_id=job_id, state_path=path)
+        df = analyzer.find_anomalies(entity_id, distance_threshold)
+
+        return {
+            "n_anomalies": df.height,
+            "anomalies": df.to_dicts()
+        }
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.get("/api/state/summary/{entity_id}")
+async def get_state_summary(entity_id: str, job_id: str = None, path: str = None):
+    """Get state summary for an entity."""
+    try:
+        analyzer = get_state_analyzer(job_id=job_id, state_path=path)
+        summary = analyzer.summarize_entity(entity_id)
+
+        if not summary:
+            raise HTTPException(404, f"No state data for {entity_id}")
+
+        return summary
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.get("/api/state/fleet")
+async def get_fleet_summary(job_id: str = None, path: str = None):
+    """Get state summary for entire fleet."""
+    try:
+        analyzer = get_state_analyzer(job_id=job_id, state_path=path)
+        return analyzer.summarize_fleet()
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.get("/api/state/entities")
+async def get_state_entities(job_id: str = None, path: str = None):
+    """Get list of entities in state data."""
+    try:
+        analyzer = get_state_analyzer(job_id=job_id, state_path=path)
+        entities = analyzer.get_entities()
+
+        return {
+            "n_entities": len(entities),
+            "entities": entities
+        }
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.get("/api/state/all-current")
+async def get_all_current_states(job_id: str = None, path: str = None):
+    """Get current state for all entities."""
+    try:
+        analyzer = get_state_analyzer(job_id=job_id, state_path=path)
+        states = analyzer.get_all_current_states()
+
+        # Sort by state_distance (worst first)
+        states = sorted(states, key=lambda x: x.get('state_distance', 0), reverse=True)
+
+        return {
+            "n_entities": len(states),
+            "states": states
+        }
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+# =============================================================================
+# PHYSICS INTERPRETATION ENDPOINTS
+# =============================================================================
+# Detecting Symplectic Structure Loss via Information-Geometric Coherence
+#
+# The physics stack (top-down):
+#   L4: Thermodynamics → Is energy conserved?
+#   L3: Mechanics      → Where is energy flowing?
+#   L2: Coherence      → Is symplectic structure intact?
+#   L1: State          → Phase space position (consequence)
+#
+# The Ørthon Signal: dissipating + decoupling + diverging
+
+@app.get("/api/physics/analyze/{entity_id}")
+async def physics_analyze_entity(entity_id: str, job_id: str = None, path: str = None):
+    """
+    Full physics analysis for an entity.
+
+    Analyzes the complete physics stack (L4→L1) and detects the Ørthon signal.
+
+    The Ørthon Signal indicates symplectic structure loss:
+        dissipating + decoupling + diverging = degradation
+
+    Args:
+        entity_id: Entity identifier
+        job_id: Job ID to look up physics.parquet
+        path: Or provide path to physics.parquet directly
+    """
+    try:
+        interpreter = get_physics_interpreter(job_id=job_id, physics_path=path)
+        analysis = interpreter.analyze_system(entity_id)
+
+        if 'error' in analysis:
+            raise HTTPException(404, analysis['error'])
+
+        return analysis
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.get("/api/physics/energy/{entity_id}")
+async def physics_energy_budget(entity_id: str, job_id: str = None, path: str = None):
+    """
+    L4 Thermodynamics: Is energy conserved?
+
+    The starting point of physics analysis. If energy is conserved,
+    the system maintains its symplectic structure.
+
+    Returns:
+        - energy_conserved: bool
+        - energy_trend: 'stable' | 'accumulating' | 'dissipating'
+        - dissipation_rate_mean: float
+        - entropy_trend: 'stable' | 'increasing' | 'decreasing'
+    """
+    try:
+        interpreter = get_physics_interpreter(job_id=job_id, physics_path=path)
+        result = interpreter.analyze_energy_budget(entity_id)
+
+        if result is None:
+            raise HTTPException(404, f"No data for entity {entity_id}")
+
+        return {"entity_id": entity_id, "L4_thermodynamics": result}
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.get("/api/physics/flow/{entity_id}")
+async def physics_energy_flow(entity_id: str, job_id: str = None, path: str = None):
+    """
+    L3 Mechanics: Where is energy flowing?
+
+    Only meaningful if energy is NOT conserved. Identifies energy
+    flow patterns, sources, and sinks.
+
+    Returns:
+        - energy_distribution: 'distributed' | 'uneven' | 'concentrated'
+        - sources: list of signals gaining energy
+        - sinks: list of signals losing energy
+    """
+    try:
+        interpreter = get_physics_interpreter(job_id=job_id, physics_path=path)
+
+        flow = interpreter.analyze_energy_flow(entity_id)
+        sources_sinks = interpreter.identify_energy_sources_sinks(entity_id)
+
+        if flow is None:
+            raise HTTPException(404, f"No data for entity {entity_id}")
+
+        return {
+            "entity_id": entity_id,
+            "L3_mechanics": {
+                "flow": flow,
+                "sources_sinks": sources_sinks,
+            }
+        }
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.get("/api/physics/coherence/{entity_id}")
+async def physics_coherence(entity_id: str, job_id: str = None, path: str = None):
+    """
+    L2 Coherence: Is the symplectic structure intact? (Eigenvalue-Based)
+
+    Now uses eigenvalue-based metrics for structural coherence analysis.
+    Eigenvalue coherence captures STRUCTURE, not just average correlation.
+
+    Returns:
+        - coupling_state: 'strongly_coupled' | 'weakly_coupled' | 'decoupled'
+        - structure_state: 'unified' | 'clustered' | 'fragmented'
+        - is_decoupling: bool (coherence dropping)
+        - is_fragmenting: bool (modes splitting apart)
+        - current_coherence: float (λ₁/Σλ - spectral coherence)
+        - current_effective_dim: float (participation ratio - how many modes)
+        - current_eigenvalue_entropy: float (spectral disorder 0-1)
+        - baseline_coherence: float
+        - baseline_effective_dim: float
+        - coherence_vs_baseline: float (ratio)
+        - coherence_trend: float
+        - effective_dim_trend: float
+        - n_signals: int
+        - n_pairs: int
+    """
+    try:
+        interpreter = get_physics_interpreter(job_id=job_id, physics_path=path)
+        result = interpreter.analyze_coherence(entity_id)
+
+        if result is None:
+            raise HTTPException(404, f"No data for entity {entity_id}")
+
+        return {"entity_id": entity_id, "L2_coherence": result}
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.get("/api/physics/coherence/{entity_id}/interpret")
+async def physics_coherence_interpret(entity_id: str, job_id: str = None, path: str = None):
+    """
+    Human-readable interpretation of coherence state.
+
+    Returns a natural language summary of what's happening with
+    the system's coupling structure based on eigenvalue analysis.
+    """
+    try:
+        interpreter = get_physics_interpreter(job_id=job_id, physics_path=path)
+        interpretation = interpreter.interpret_coherence_change(entity_id)
+
+        return {
+            "entity_id": entity_id,
+            "interpretation": interpretation
+        }
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.get("/api/physics/state/{entity_id}")
+async def physics_state(entity_id: str, job_id: str = None, path: str = None):
+    """
+    L1 State: Where is the system in phase space?
+
+    State is the CONSEQUENCE of energy dynamics.
+    state_distance = Mahalanobis distance from baseline (using ALL metrics)
+    state_velocity = generalized hd_slope
+
+    Returns:
+        - is_stable: bool
+        - trend: 'stable' | 'converging' | 'diverging'
+        - current_distance: float (σ from baseline)
+        - current_velocity: float (rate of change)
+    """
+    try:
+        interpreter = get_physics_interpreter(job_id=job_id, physics_path=path)
+        result = interpreter.analyze_state(entity_id)
+
+        if result is None:
+            raise HTTPException(404, f"No data for entity {entity_id}")
+
+        return {"entity_id": entity_id, "L1_state": result}
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.get("/api/physics/fleet")
+async def physics_fleet_analysis(job_id: str = None, path: str = None):
+    """
+    Analyze entire fleet for physics anomalies.
+
+    Identifies all entities with the Ørthon signal (symplectic structure loss).
+
+    Returns:
+        - n_entities: int
+        - severity_counts: {normal, watch, warning, critical}
+        - orthon_signals: list of entity_ids with the signal
+        - pct_healthy: float
+        - entities: list sorted by severity
+    """
+    try:
+        interpreter = get_physics_interpreter(job_id=job_id, physics_path=path)
+        return interpreter.analyze_fleet()
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.get("/api/physics/entities")
+async def physics_get_entities(job_id: str = None, path: str = None):
+    """Get list of entities in physics data."""
+    try:
+        interpreter = get_physics_interpreter(job_id=job_id, physics_path=path)
+        entities = interpreter.get_entities()
+
+        return {
+            "n_entities": len(entities),
+            "entities": entities
+        }
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.post("/api/physics/configure")
+async def physics_configure(data: dict):
+    """
+    Configure real physics mode for a job.
+
+    When units and constants are provided, PhysicsInterpreter computes
+    real energy (Joules) instead of proxy energy (y² + dy²).
+
+    Proxy physics detects the same DYNAMICS, just without MAGNITUDE.
+    Real physics requires:
+        - Signal units (e.g., {'Motor_current': 'A', 'Pump_speed': 'rpm'})
+        - Domain constants (e.g., mass, moment_of_inertia, inductance)
+
+    Input:
+    {
+        "job_id": "abc123",
+        "signal_units": {
+            "Motor_current": "A",
+            "Pump_speed": "rpm",
+            "Temperature": "degC"
+        },
+        "constants": {
+            "mass": 100.0,
+            "moment_of_inertia": 0.5,
+            "inductance": 0.01,
+            "thermal_mass": 5000.0
+        }
+    }
+    """
+    job_id = data.get("job_id")
+    if not job_id:
+        raise HTTPException(400, "job_id required")
+
+    signal_units = data.get("signal_units", {})
+
+    # Build PhysicsConstants from input
+    constants_dict = data.get("constants", {})
+    constants = PhysicsConstants(
+        mass=constants_dict.get("mass"),
+        spring_constant=constants_dict.get("spring_constant"),
+        damping_coefficient=constants_dict.get("damping_coefficient"),
+        specific_heat=constants_dict.get("specific_heat"),
+        thermal_mass=constants_dict.get("thermal_mass"),
+        volume=constants_dict.get("volume"),
+        density=constants_dict.get("density"),
+        inductance=constants_dict.get("inductance"),
+        capacitance=constants_dict.get("capacitance"),
+        resistance=constants_dict.get("resistance"),
+        moment_of_inertia=constants_dict.get("moment_of_inertia"),
+    )
+
+    set_physics_config(job_id, signal_units, constants)
+
+    return {
+        "status": "configured",
+        "job_id": job_id,
+        "signal_units": signal_units,
+        "constants": constants.to_dict(),
+        "message": "Real physics mode enabled for this job"
+    }
+
+
+# Unit to category mapping for engine selection
+UNIT_TO_CATEGORY = {
+    # Pressure
+    'bar': 'pressure', 'PSI': 'pressure', 'kPa': 'pressure', 'Pa': 'pressure',
+    'psi': 'pressure', 'mbar': 'pressure', 'MPa': 'pressure',
+    # Temperature
+    'degC': 'temperature', 'degF': 'temperature', 'K': 'temperature',
+    '°C': 'temperature', '°F': 'temperature',
+    # Current
+    'A': 'current', 'mA': 'current', 'amp': 'current',
+    # Voltage
+    'V': 'voltage', 'mV': 'voltage', 'kV': 'voltage',
+    # Vibration
+    'g': 'vibration', 'mm/s': 'vibration', 'm/s2': 'vibration',
+    # Flow
+    'gpm': 'flow', 'lpm': 'flow', 'm3/s': 'flow', 'L/min': 'flow',
+    # Rotation
+    'rpm': 'rotation', 'Hz': 'rotation', 'rad/s': 'rotation',
+    # Force/Torque
+    'N': 'force', 'kN': 'force', 'lbf': 'force',
+    'Nm': 'torque', 'ft-lb': 'torque',
+    # Power
+    'kW': 'power', 'W': 'power', 'hp': 'power',
+}
+
+
 @app.post("/api/prism/compute")
 async def prism_compute(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
-    discipline: str = Form("core"),
+    discipline: str = Form(""),
     window_size: int = Form(50),
     window_stride: int = Form(25),
     constants: Optional[str] = Form(None),
+    units: Optional[str] = Form(None),
 ):
     """
     Send data to PRISM for computation.
 
-    1. Save uploaded file
-    2. Call PRISM /compute
-    3. Return results location
+    If a job is already running, this job is queued.
+
+    1. Check queue - if job running, queue this one
+    2. Transform user data to observations.parquet
+    3. Build manifest with engines based on units
+    4. Send both to PRISM
+    5. Return results (or queue position)
 
     Args:
-        constants: JSON string of global constants (density, viscosity, etc.)
+        file: User's data file (CSV, Parquet, Excel)
+        discipline: Physics discipline (empty = core analysis only)
+        window_size: Window size for rolling calculations
+        window_stride: Stride between windows
+        constants: JSON string of global constants
+        units: JSON string mapping column names to units
     """
+    from orthon.intake.transformer import IntakeTransformer
+    from orthon.services.manifest_builder import build_manifest_from_units
+
+    manager = get_job_manager()
+
     # Save uploaded file
     suffix = Path(file.filename).suffix if file.filename else '.csv'
-    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-        content = await file.read()
-        tmp.write(content)
-        observations_path = tmp.name
+    work_dir = tempfile.mkdtemp(prefix="orthon_job_")
+    input_path = Path(work_dir) / f"input{suffix}"
 
-    # Create output directory
-    output_dir = tempfile.mkdtemp(prefix="orthon_results_")
+    content = await file.read()
+    with open(input_path, 'wb') as f:
+        f.write(content)
 
     try:
-        # Build config
-        config = {
-            "discipline": discipline,
-            "window": {
-                "size": window_size,
-                "stride": window_stride,
-            }
-        }
+        # Parse units if provided
+        unit_map = {}
+        if units:
+            try:
+                unit_map = json.loads(units)
+            except json.JSONDecodeError:
+                pass
 
-        # Add global constants if provided
+        # Transform to observations.parquet
+        transformer = IntakeTransformer(discipline=discipline if discipline else None)
+        obs_path, config_path = transformer.transform(input_path, work_dir)
+
+        # Detect unit categories from the assigned units
+        unit_categories = set()
+        for col, unit in unit_map.items():
+            # Skip index/ignored columns
+            if unit in ('index', 'unitless', 'state', 'count', ''):
+                continue
+            # Map unit to category
+            category = UNIT_TO_CATEGORY.get(unit)
+            if category:
+                unit_categories.add(category)
+
+        # Build manifest
+        manifest = build_manifest_from_units(
+            unit_categories=list(unit_categories),
+            window_size=window_size,
+            stride=window_stride,
+            include_universal=True,
+            include_causality=len(unit_categories) > 1,  # Only if multiple signal types
+        )
+
+        # Add discipline-specific engines if selected
+        if discipline and discipline not in ("", "core"):
+            manifest["discipline"] = discipline
+
+        # Add constants to manifest
         if constants:
             try:
                 parsed_constants = json.loads(constants)
-                # Filter out empty values
                 global_constants = {k: v for k, v in parsed_constants.items() if v is not None and v != ""}
                 if global_constants:
-                    config["global_constants"] = global_constants
+                    manifest["constants"] = global_constants
             except json.JSONDecodeError:
-                pass  # Ignore malformed JSON
+                pass
 
-        # Call PRISM
-        client = get_prism_client()
-        result = client.compute(
-            config=config,
-            observations_path=observations_path,
-            output_dir=output_dir,
+        # Create job record
+        job = manager.create_job(
+            manifest=manifest,
+            observations_path=str(obs_path),
+            output_dir=work_dir,
         )
 
+        # Check queue and enqueue
+        queue_result = manager.enqueue_job(job.job_id)
+
+        if queue_result["status"] == "queued":
+            # Job is queued, return immediately with queue position
+            return {
+                "status": "queued",
+                "job_id": job.job_id,
+                "queue_position": queue_result["position"],
+                "message": f"Job queued at position {queue_result['position']}. A job is currently running.",
+            }
+
+        # Job is running - execute now
+        client = get_prism_client()
+        result = client.compute(
+            observations_path=str(obs_path),
+            manifest=manifest,
+        )
+
+        # Mark job complete or failed
         if result.get("status") == "error":
+            manager.complete_current_job(JobStatus.FAILED)
             raise HTTPException(status_code=500, detail=result.get("message", "PRISM error"))
 
-        # List result parquets
-        results_path = Path(result.get("results_path", output_dir))
-        parquets = list(results_path.glob("*.parquet"))
+        manager.set_outputs(job.job_id, result.get("files", []), result.get("output_dir", ""))
+        manager.complete_current_job(JobStatus.COMPLETE)
 
-        # Store results path for serving
+        # Store job info for serving results
         global _last_results_path
-        _last_results_path = results_path
+        _last_results_path = result.get("job_id")
 
         return {
             "status": "complete",
-            "results_path": str(results_path),
-            "parquets": [p.name for p in parquets],
-            "parquet_urls": [f"/api/prism/results/{p.name}" for p in parquets],
+            "job_id": job.job_id,
+            "prism_job_id": result.get("job_id"),
+            "files": result.get("files", []),
+            "file_urls": result.get("file_urls", []),
+            "duration_seconds": result.get("duration_seconds"),
         }
 
-    except HTTPException:
+    except HTTPException as e:
+        # Mark job as failed and process next in queue
+        if 'job' in locals():
+            manager.complete_current_job(JobStatus.FAILED)
         raise
     except Exception as e:
+        import traceback
+        traceback.print_exc()
+        # Mark job as failed and process next in queue
+        if 'job' in locals():
+            manager.complete_current_job(JobStatus.FAILED)
         raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        # Clean up input file (but keep results for download)
-        Path(observations_path).unlink(missing_ok=True)
+
+
+@app.get("/api/prism/results/{job_id}/{filename}")
+async def get_prism_result_by_job(job_id: str, filename: str):
+    """Proxy a PRISM result parquet file by job_id."""
+    import os
+
+    # Security: prevent path traversal
+    safe_job_id = os.path.basename(job_id)
+    safe_filename = os.path.basename(filename)
+    if safe_job_id != job_id or safe_filename != filename:
+        raise HTTPException(status_code=400, detail="Invalid path")
+
+    # Fetch from PRISM
+    try:
+        client = get_prism_client()
+        prism_url = f"{client.base_url}/results/{safe_job_id}/{safe_filename}"
+
+        import httpx
+        async with httpx.AsyncClient() as async_client:
+            r = await async_client.get(prism_url)
+
+        if r.status_code == 404:
+            raise HTTPException(status_code=404, detail="Result file not found")
+
+        return Response(
+            content=r.content,
+            media_type="application/octet-stream",
+            headers={"Content-Disposition": f"attachment; filename={safe_filename}"}
+        )
+    except httpx.ConnectError:
+        raise HTTPException(status_code=503, detail="PRISM server not available")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/prism/results/{filename}")
 async def get_prism_result(filename: str):
-    """Serve a PRISM result parquet file."""
+    """Serve a PRISM result parquet file (legacy - uses last job)."""
     global _last_results_path
 
     if _last_results_path is None:
         raise HTTPException(status_code=404, detail="No results available. Run compute first.")
 
-    # Security: prevent path traversal - only allow basename
+    # If _last_results_path is a job_id string, proxy from PRISM
+    if isinstance(_last_results_path, str):
+        return await get_prism_result_by_job(_last_results_path, filename)
+
+    # Legacy: local path
     import os
     safe_filename = os.path.basename(filename)
     if safe_filename != filename or '..' in filename:
@@ -812,6 +1477,182 @@ async def concierge_ask(
     return {"answer": answer}
 
 
+# =============================================================================
+# ORTHON CONCIERGE (Natural Language -> SQL Reports)
+# =============================================================================
+# Ask questions in plain English, get ORTHON analysis
+
+from orthon.services.concierge import Concierge as OrthonConcierge, ConciergeResponse
+
+
+@app.post("/api/orthon/ask")
+async def orthon_ask(data: dict):
+    """
+    Ask ORTHON a question in natural language.
+
+    This is the main Concierge endpoint - users can ask questions like:
+    - "Which entity is healthiest?"
+    - "What's wrong with entity 97?"
+    - "Compare all entities"
+    - "When did failures start?"
+    - "Why is entity 105 degrading?"
+
+    Input:
+    {
+        "question": "Which entity is in the worst condition?",
+        "data_dir": "/path/to/parquet/files"  # Optional, uses last loaded results
+    }
+
+    Output:
+    {
+        "question": "Which entity is in the worst condition?",
+        "answer": "**Entity 105** is in the worst condition...",
+        "sql": "SELECT ... FROM physics ...",
+        "data": [{"entity_id": "105", ...}],
+        "confidence": "high"
+    }
+    """
+    global _last_results_path
+
+    question = data.get("question")
+    if not question:
+        raise HTTPException(status_code=400, detail="Missing 'question' in request body")
+
+    # Get data directory
+    data_dir = data.get("data_dir")
+    if not data_dir and _last_results_path:
+        data_dir = str(_last_results_path)
+    if not data_dir:
+        raise HTTPException(
+            status_code=400,
+            detail="No data directory specified. Either provide 'data_dir' or load results first."
+        )
+
+    try:
+        concierge = OrthonConcierge(data_dir)
+        response = concierge.ask(question)
+
+        return {
+            "question": response.question,
+            "answer": response.answer,
+            "sql": response.sql,
+            "data": response.data,
+            "confidence": response.confidence,
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/orthon/health/{entity_id}")
+async def orthon_entity_health(entity_id: str, data_dir: str = None):
+    """
+    Get health status for a specific entity.
+
+    Quick endpoint for entity-specific queries.
+    """
+    global _last_results_path
+
+    if not data_dir and _last_results_path:
+        data_dir = str(_last_results_path)
+    if not data_dir:
+        raise HTTPException(status_code=400, detail="No data directory available")
+
+    try:
+        concierge = OrthonConcierge(data_dir)
+        response = concierge.ask(f"health of entity {entity_id}")
+
+        return {
+            "entity_id": entity_id,
+            "answer": response.answer,
+            "data": response.data,
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/orthon/fleet")
+async def orthon_fleet_summary(data_dir: str = None):
+    """
+    Get fleet-wide summary.
+
+    Quick overview of all entities.
+    """
+    global _last_results_path
+
+    if not data_dir and _last_results_path:
+        data_dir = str(_last_results_path)
+    if not data_dir:
+        raise HTTPException(status_code=400, detail="No data directory available")
+
+    try:
+        concierge = OrthonConcierge(data_dir)
+        response = concierge.ask("fleet summary")
+
+        return {
+            "answer": response.answer,
+            "data": response.data,
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/orthon/anomalies")
+async def orthon_anomalies(data_dir: str = None):
+    """
+    Find anomalous entities.
+
+    Identifies entities deviating from fleet norms.
+    """
+    global _last_results_path
+
+    if not data_dir and _last_results_path:
+        data_dir = str(_last_results_path)
+    if not data_dir:
+        raise HTTPException(status_code=400, detail="No data directory available")
+
+    try:
+        concierge = OrthonConcierge(data_dir)
+        response = concierge.ask("find anomalies")
+
+        return {
+            "answer": response.answer,
+            "data": response.data,
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/orthon/orthon-signal")
+async def orthon_signal_status(data_dir: str = None):
+    """
+    Check Ørthon signal status across fleet.
+
+    The Ørthon signal = dissipating + decoupling + diverging
+    """
+    global _last_results_path
+
+    if not data_dir and _last_results_path:
+        data_dir = str(_last_results_path)
+    if not data_dir:
+        raise HTTPException(status_code=400, detail="No data directory available")
+
+    try:
+        concierge = OrthonConcierge(data_dir)
+        response = concierge.ask("orthon signal status")
+
+        return {
+            "answer": response.answer,
+            "data": response.data,
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/api/suggest-units")
 async def suggest_units(data: dict):
     """
@@ -855,7 +1696,7 @@ Digital/Binary signals (on/off, switches, states):
 - count (for pulse counters, impulse counters)
 
 Special:
-- REMOVE (for index columns like "Unnamed: 0", row numbers)
+- index (for index columns like "Unnamed: 0", row numbers, sequence numbers)
 - unitless (for dimensionless ratios)
 
 Pattern hints:
@@ -867,10 +1708,10 @@ Pattern hints:
 - switch, DV_, COMP, Tower, MPG, LPS = digital state (state)
 - impulse, pulse, caudal = pulse counter (count)
 - level, Oil_level = could be state (binary) or % (analog)
-- Unnamed, index, column00 = row index (REMOVE)
+- Unnamed, index, column00, column with sequential numbers = row index (index)
 
 Respond ONLY with valid JSON mapping signal name to unit. Example:
-{{"TP2": "bar", "Oil_temperature": "degC", "Motor_current": "A", "Pressure_switch": "state", "Unnamed: 0": "REMOVE"}}
+{{"Unnamed: 0": "index", "TP2": "bar", "Oil_temperature": "degC", "Motor_current": "A", "Pressure_switch": "state"}}
 """
 
         # Use the concierge's client directly
@@ -1530,7 +2371,7 @@ async def build_manifest(data: dict):
         ],
         "windows": {"size": 100, "stride": 50},
         "layers": {"typology": true, "geometry": true, "dynamics": true},
-        "engines": {"core": ["hurst", "entropy", "lyapunov"]}
+        "engines": {"core": ["hurst", "entropy"]}
     }
 
     Output (manifest):
@@ -1627,6 +2468,561 @@ async def manifest_from_units(data: dict):
 
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+# =============================================================================
+# AI-GUIDED TUNING ENDPOINTS
+# =============================================================================
+# Validate PRISM detection against ground truth labels.
+# Learn optimal thresholds and fault signatures.
+
+from orthon.services.tuning_service import TuningService, get_tuning_service
+from orthon.services.fingerprint_service import (
+    FingerprintService,
+    get_fingerprint_service,
+    generate_healthy_fingerprint,
+    generate_deviation_fingerprint,
+)
+
+
+@app.post("/api/tuning/analyze")
+async def tuning_analyze(data: dict):
+    """
+    Analyze detection performance against ground truth.
+
+    This is the main tuning endpoint. Run after PRISM analysis on labeled data.
+
+    Input:
+    {
+        "data_dir": "/path/to/prism/results",
+        "labels_path": "/path/to/labels.parquet"  # Optional if in data_dir
+    }
+
+    Output:
+    {
+        "optimal_z_threshold": 2.5,
+        "best_metrics_by_fault_type": {"valve": "coherence", "cavitation": "entropy"},
+        "detection_rate": 94.0,
+        "avg_lead_time": 47.3,
+        "n_entities": 100,
+        "metric_rankings": [...],
+        "threshold_curve": [...],
+        "recommendations": "## Tuning Recommendations..."
+    }
+    """
+    global _last_results_path
+
+    data_dir = data.get("data_dir")
+    labels_path = data.get("labels_path")
+
+    # Use last loaded results if no data_dir provided
+    if not data_dir and _last_results_path:
+        data_dir = str(_last_results_path)
+
+    if not data_dir:
+        raise HTTPException(
+            status_code=400,
+            detail="No data directory specified. Either provide 'data_dir' or load results first."
+        )
+
+    try:
+        tuner = TuningService(data_dir, labels_path)
+        result = tuner.tune()
+
+        return result.to_dict()
+
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/tuning/optimize-thresholds")
+async def tuning_optimize_thresholds(data: dict):
+    """
+    Find optimal detection thresholds based on ground truth.
+
+    Tests multiple z-thresholds and returns performance at each.
+
+    Input:
+    {
+        "data_dir": "/path/to/prism/results"
+    }
+
+    Output:
+    {
+        "optimal": {"z": 2.5, "criterion": "best_balanced", "detection_rate": 94.0},
+        "threshold_curve": [
+            {"z_threshold": 1.5, "detection_rate": 98.0, "avg_lead_time": 60.0, ...},
+            {"z_threshold": 2.0, "detection_rate": 95.0, "avg_lead_time": 52.0, ...},
+            ...
+        ]
+    }
+    """
+    global _last_results_path
+
+    data_dir = data.get("data_dir")
+    labels_path = data.get("labels_path")
+
+    if not data_dir and _last_results_path:
+        data_dir = str(_last_results_path)
+
+    if not data_dir:
+        raise HTTPException(status_code=400, detail="No data directory specified.")
+
+    try:
+        tuner = TuningService(data_dir, labels_path)
+
+        optimal = tuner.find_optimal_threshold()
+        threshold_curve = tuner.get_threshold_curve()
+
+        return {
+            "optimal": optimal,
+            "threshold_curve": threshold_curve.to_dicts() if threshold_curve.height > 0 else [],
+        }
+
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/tuning/fault-signatures")
+async def tuning_fault_signatures(data: dict):
+    """
+    Learn fault signatures - which metrics detect which fault types best.
+
+    Input:
+    {
+        "data_dir": "/path/to/prism/results"
+    }
+
+    Output:
+    {
+        "signatures": {"valve": "coherence", "cavitation": "entropy"},
+        "signature_matrix": [
+            {"fault_type": "valve", "metric_name": "coherence", "detection_rate": 94.0, ...},
+            ...
+        ]
+    }
+    """
+    global _last_results_path
+
+    data_dir = data.get("data_dir")
+    labels_path = data.get("labels_path")
+
+    if not data_dir and _last_results_path:
+        data_dir = str(_last_results_path)
+
+    if not data_dir:
+        raise HTTPException(status_code=400, detail="No data directory specified.")
+
+    try:
+        tuner = TuningService(data_dir, labels_path)
+
+        signatures = tuner.learn_fault_signatures()
+        matrix = tuner.get_fault_signature_matrix()
+
+        return {
+            "signatures": signatures,
+            "signature_matrix": matrix.to_dicts() if matrix.height > 0 else [],
+        }
+
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/tuning/metric-performance")
+async def tuning_metric_performance(data: dict):
+    """
+    Get per-metric detection performance.
+
+    Shows which metrics have best detection rate and lead time.
+
+    Input:
+    {
+        "data_dir": "/path/to/prism/results"
+    }
+
+    Output:
+    {
+        "metric_rankings": [
+            {"metric_name": "coherence", "detection_rate_pct": 94.0, "avg_lead_time": 47.0, ...},
+            {"metric_name": "entropy", "detection_rate_pct": 88.0, "avg_lead_time": 52.0, ...},
+            ...
+        ]
+    }
+    """
+    global _last_results_path
+
+    data_dir = data.get("data_dir")
+    labels_path = data.get("labels_path")
+
+    if not data_dir and _last_results_path:
+        data_dir = str(_last_results_path)
+
+    if not data_dir:
+        raise HTTPException(status_code=400, detail="No data directory specified.")
+
+    try:
+        tuner = TuningService(data_dir, labels_path)
+        metric_perf = tuner.get_metric_performance()
+
+        return {
+            "metric_rankings": metric_perf.to_dicts() if metric_perf.height > 0 else [],
+        }
+
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/tuning/generate-config")
+async def tuning_generate_config(data: dict):
+    """
+    Generate tuned configuration based on validation results.
+
+    Creates optimized thresholds and priority metrics based on tuning analysis.
+
+    Input:
+    {
+        "data_dir": "/path/to/prism/results"
+    }
+
+    Output:
+    {
+        "tuned_thresholds": {"z_warning": 2.5, "z_critical": 3.5},
+        "priority_metrics": ["coherence", "entropy", "lyapunov"],
+        "fault_signatures": {"valve": "coherence", "cavitation": "entropy"},
+        "tuning_metadata": {...}
+    }
+    """
+    global _last_results_path
+
+    data_dir = data.get("data_dir")
+    labels_path = data.get("labels_path")
+
+    if not data_dir and _last_results_path:
+        data_dir = str(_last_results_path)
+
+    if not data_dir:
+        raise HTTPException(status_code=400, detail="No data directory specified.")
+
+    try:
+        tuner = TuningService(data_dir, labels_path)
+        config = tuner.generate_tuned_config()
+
+        return config.to_dict()
+
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/tuning/labels")
+async def tuning_get_labels(data_dir: str = None):
+    """
+    Get summary of available ground truth labels.
+
+    Returns what label columns are available and their value distributions.
+    """
+    global _last_results_path
+
+    if not data_dir and _last_results_path:
+        data_dir = str(_last_results_path)
+
+    if not data_dir:
+        raise HTTPException(status_code=400, detail="No data directory specified.")
+
+    try:
+        tuner = TuningService(data_dir)
+        label_summary = tuner.get_label_summary()
+
+        return {
+            "labels": label_summary.to_dicts() if label_summary.height > 0 else [],
+        }
+
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# FINGERPRINT ENDPOINTS
+# =============================================================================
+# System health fingerprints - learned signatures for healthy, deviation, failure states.
+# Same math. Different fingerprints. Every system has its own signature.
+
+
+@app.get("/api/fingerprints/domains")
+async def fingerprints_list_domains():
+    """
+    List available fingerprint domains.
+
+    Returns domains that have fingerprints stored.
+    """
+    fps = get_fingerprint_service()
+    domains = []
+
+    if fps.fingerprints_dir.exists():
+        for domain_dir in fps.fingerprints_dir.iterdir():
+            if domain_dir.is_dir():
+                count = len(list(domain_dir.glob("*.yaml")))
+                if count > 0:
+                    domains.append({
+                        "domain": domain_dir.name,
+                        "fingerprint_count": count,
+                    })
+
+    return {"domains": domains}
+
+
+@app.get("/api/fingerprints/{domain}")
+async def fingerprints_get_domain(domain: str):
+    """
+    Get all fingerprints for a domain.
+
+    Returns healthy, deviation, and failure fingerprints.
+    """
+    fps = get_fingerprint_service()
+    count = fps.load_fingerprints(domain)
+
+    if count == 0:
+        raise HTTPException(status_code=404, detail=f"No fingerprints found for domain: {domain}")
+
+    healthy = fps.healthy.get(domain)
+    deviations = fps.deviations.get(domain, [])
+    failures = fps.failures.get(domain, [])
+
+    return {
+        "domain": domain,
+        "healthy": healthy.to_dict() if healthy else None,
+        "deviations": [d.to_dict() for d in deviations],
+        "failures": [f.to_dict() for f in failures],
+    }
+
+
+@app.post("/api/fingerprints/classify")
+async def fingerprints_classify(data: dict):
+    """
+    Classify current system state against fingerprints.
+
+    Input:
+    {
+        "domain": "pump",
+        "metrics": {
+            "coherence": 0.18,
+            "lyapunov": -0.03,
+            "entropy": 1.45,
+            "hurst": 0.58
+        }
+    }
+
+    Output:
+    {
+        "state": "deviation",
+        "fault_type": "valve_obstruction",
+        "confidence": 87.5,
+        "lead_time": 47,
+        "matching_indicators": ["coherence", "hurst"],
+        "description": "Pattern matches valve obstruction..."
+    }
+    """
+    domain = data.get("domain")
+    metrics = data.get("metrics", {})
+
+    if not domain:
+        raise HTTPException(status_code=400, detail="Missing 'domain' in request")
+    if not metrics:
+        raise HTTPException(status_code=400, detail="Missing 'metrics' in request")
+
+    fps = get_fingerprint_service()
+    fps.load_fingerprints(domain)
+
+    match = fps.classify_state(metrics, domain)
+
+    return {
+        "state": match.fingerprint_type,
+        "fault_type": match.fault_type,
+        "confidence": match.confidence,
+        "lead_time": match.lead_time,
+        "matching_indicators": match.matching_indicators,
+        "description": match.pattern_description,
+    }
+
+
+@app.post("/api/fingerprints/compare-to-healthy")
+async def fingerprints_compare_healthy(data: dict):
+    """
+    Compare current metrics to healthy baseline.
+
+    Input:
+    {
+        "domain": "pump",
+        "metrics": {"coherence": 0.18, "lyapunov": -0.03}
+    }
+
+    Output:
+    {
+        "comparisons": {
+            "coherence": {"z_score": -3.2, "status": "critical"},
+            "lyapunov": {"z_score": 1.5, "status": "normal"}
+        }
+    }
+    """
+    domain = data.get("domain")
+    metrics = data.get("metrics", {})
+
+    if not domain:
+        raise HTTPException(status_code=400, detail="Missing 'domain'")
+
+    fps = get_fingerprint_service()
+    fps.load_fingerprints(domain)
+
+    comparison = fps.compare_to_healthy(metrics, domain)
+
+    return {
+        "comparisons": {
+            metric: {"z_score": z, "status": status}
+            for metric, (z, status) in comparison.items()
+        }
+    }
+
+
+@app.post("/api/fingerprints/generate-from-tuning")
+async def fingerprints_generate(data: dict):
+    """
+    Generate fingerprints from tuning results.
+
+    After running tuning analysis, use this to create fingerprint files
+    that can be used for production monitoring.
+
+    Input:
+    {
+        "data_dir": "/path/to/results",
+        "system_id": "pump_station_7",
+        "domain": "pump",
+        "fault_types": ["valve", "cavitation"]  # Optional, auto-detect if not provided
+    }
+
+    Output:
+    {
+        "generated": ["healthy_baseline.yaml", "deviation_valve.yaml", ...],
+        "fingerprints_dir": "/path/to/fingerprints"
+    }
+    """
+    global _last_results_path
+
+    data_dir = data.get("data_dir")
+    if not data_dir and _last_results_path:
+        data_dir = str(_last_results_path)
+
+    if not data_dir:
+        raise HTTPException(status_code=400, detail="No data directory specified")
+
+    system_id = data.get("system_id", "system")
+    domain = data.get("domain", "custom")
+    fault_types = data.get("fault_types")
+
+    try:
+        # Initialize services
+        tuner = TuningService(data_dir, data.get("labels_path"))
+        tuner._load_data()
+
+        fps = get_fingerprint_service()
+        generated = []
+
+        # Generate healthy fingerprint
+        healthy_fp = generate_healthy_fingerprint(
+            tuner, system_id, domain,
+            f"Baseline from {data_dir}"
+        )
+        path = fps.save_fingerprint(healthy_fp, domain, "healthy_baseline")
+        generated.append(str(path))
+
+        # Get fault types if not provided
+        if not fault_types:
+            try:
+                label_df = tuner.get_label_summary()
+                fault_types = label_df["label_name"].to_list() if label_df.height > 0 else []
+            except Exception:
+                fault_types = []
+
+        # Generate deviation fingerprints
+        for fault_type in fault_types:
+            try:
+                dev_fp = generate_deviation_fingerprint(
+                    tuner, system_id, domain, fault_type,
+                    f"Tuning analysis of {fault_type}"
+                )
+                path = fps.save_fingerprint(dev_fp, domain, f"deviation_{fault_type}")
+                generated.append(str(path))
+            except Exception as e:
+                print(f"Warning: Could not generate fingerprint for {fault_type}: {e}")
+
+        return {
+            "generated": generated,
+            "fingerprints_dir": str(fps.fingerprints_dir / domain),
+        }
+
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/fingerprints/save")
+async def fingerprints_save(data: dict):
+    """
+    Save a fingerprint to disk.
+
+    Input:
+    {
+        "domain": "pump",
+        "filename": "deviation_valve",
+        "fingerprint": {
+            "fingerprint_type": "deviation",
+            "system_id": "pump_7",
+            ...
+        }
+    }
+    """
+    domain = data.get("domain")
+    filename = data.get("filename")
+    fingerprint_data = data.get("fingerprint")
+
+    if not domain or not filename or not fingerprint_data:
+        raise HTTPException(status_code=400, detail="Missing domain, filename, or fingerprint")
+
+    from orthon.services.fingerprint_service import (
+        HealthyFingerprint,
+        DeviationFingerprint,
+        FailureFingerprint,
+    )
+
+    fps = get_fingerprint_service()
+
+    fp_type = fingerprint_data.get("fingerprint_type")
+    if fp_type == "healthy":
+        fp = HealthyFingerprint.from_dict(fingerprint_data)
+    elif fp_type == "deviation":
+        fp = DeviationFingerprint.from_dict(fingerprint_data)
+    elif fp_type == "failure":
+        fp = FailureFingerprint.from_dict(fingerprint_data)
+    else:
+        raise HTTPException(status_code=400, detail=f"Unknown fingerprint type: {fp_type}")
+
+    path = fps.save_fingerprint(fp, domain, filename)
+
+    return {
+        "saved": True,
+        "path": str(path),
+    }
 
 
 def main():

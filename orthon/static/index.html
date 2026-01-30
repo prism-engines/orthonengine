@@ -42,8 +42,18 @@
             flex-shrink: 0;
         }
 
-        .logo { font-size: 1.25rem; font-weight: 600; }
+        .brand { display: flex; flex-direction: column; }
+        .logo {
+            font-size: 1.25rem;
+            font-weight: 600;
+            display: flex;
+            justify-content: space-between;
+            width: 100%;
+        }
         .logo span { color: var(--accent); }
+        .logo span:not(:first-child) { color: var(--text); }
+        .tagline { font-size: 0.8rem; color: var(--dim); margin-top: 0.15rem; letter-spacing: 0; font-weight: 400; white-space: nowrap; }
+        .tagline strong { color: var(--text); font-weight: 600; }
 
         .nav-tabs {
             display: flex;
@@ -796,11 +806,48 @@
 
         .confidence-fill.medium { background: var(--yellow); }
         .confidence-fill.low { background: var(--red); }
+
+        /* Tuning Section Styles */
+        #sidebar-tuning .stat-card {
+            background: var(--input);
+            border-radius: 4px;
+        }
+
+        #sidebar-tuning .stat-label {
+            font-size: 0.6rem;
+            color: var(--dim);
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+        }
+
+        #sidebar-tuning .stat-value {
+            font-size: 1rem;
+            font-weight: 600;
+        }
+
+        #tuned-config-json {
+            white-space: pre-wrap;
+            word-break: break-all;
+            color: var(--text);
+            font-family: inherit;
+        }
+
+        .tuning-result-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.3rem 0;
+            border-bottom: 1px solid var(--border);
+            font-size: 0.7rem;
+        }
     </style>
 </head>
 <body>
     <header>
-        <div class="logo"><span>Ø</span>RTHON</div>
+        <div class="brand">
+            <div class="logo"><span>O</span><span>R</span><span>T</span><span>H</span><span>O</span><span>N</span></div>
+            <div class="tagline">Not monitoring. <strong>Understanding.</strong></div>
+        </div>
         <div class="nav-tabs">
             <button class="nav-tab active" onclick="showView('data')">Data</button>
             <button class="nav-tab" onclick="showView('config')">Config</button>
@@ -818,6 +865,7 @@
                 <button class="sidebar-tab active" onclick="showSidebarTab('inputs')">Inputs</button>
                 <button class="sidebar-tab" onclick="showSidebarTab('analysis')">Analysis</button>
                 <button class="sidebar-tab" onclick="showSidebarTab('results')">Results</button>
+                <button class="sidebar-tab" onclick="showSidebarTab('tuning')" id="tuning-tab">Tuning</button>
                 <button class="sidebar-tab" onclick="showSidebarTab('ai')" id="ai-tab" style="display: none;">AI</button>
             </div>
 
@@ -860,14 +908,18 @@
                         <div>
                             <label style="font-size: 0.65rem; color: var(--dim); display: block; margin-bottom: 0.2rem;">Discipline</label>
                             <select id="discipline-select" style="width: 100%; background: var(--input); border: 1px solid var(--border); color: var(--text); padding: 0.4rem 0.5rem; border-radius: 4px; font: inherit; font-size: 0.75rem;">
-                                <option value="core" selected>Core Analysis</option>
+                                <option value="" selected>Core Analysis (no physics)</option>
                                 <option value="thermodynamics">Thermodynamics</option>
                                 <option value="transport">Transport Phenomena</option>
                                 <option value="reaction">Reaction Engineering</option>
-                                <option value="process_control">Process Control</option>
-                                <option value="mechanical">Mechanical Systems</option>
+                                <option value="controls">Process Control</option>
+                                <option value="mechanics">Mechanical Systems</option>
                                 <option value="electrical">Electrical Systems</option>
                                 <option value="fluid_dynamics">Fluid Dynamics</option>
+                                <option value="separations">Separations</option>
+                                <option value="phase_equilibria">Phase Equilibria</option>
+                                <option value="balances">Material & Energy Balances</option>
+                                <option value="electrochemistry">Electrochemistry</option>
                             </select>
                         </div>
                     </div>
@@ -970,6 +1022,99 @@
                         <button class="btn btn-primary" onclick="generateMarkdowns()" style="width: 100%;">Generate Markdowns</button>
                     </div>
                     <div id="markdown-status" style="font-size: 0.7rem; color: var(--dim); margin-top: 0.5rem;"></div>
+                </div>
+            </div>
+
+            <!-- TUNING TAB -->
+            <div class="sidebar-panel" id="sidebar-tuning">
+                <!-- Labels Detection -->
+                <div class="sidebar-section">
+                    <div class="section-title">
+                        Ground Truth Labels
+                        <span id="labels-count" style="margin-left: 0.5rem; color: var(--dim);">—</span>
+                    </div>
+                    <div id="labels-info" style="font-size: 0.7rem; color: var(--dim);">
+                        Upload data with label columns (anomaly, changepoint, fault) to enable tuning.
+                    </div>
+                    <div id="labels-list" style="display: none; margin-top: 0.5rem;"></div>
+                </div>
+
+                <!-- Tuning Analysis -->
+                <div class="sidebar-section">
+                    <div class="section-title">
+                        Tuning Analysis
+                        <span id="tuning-status-badge" style="font-size: 0.6rem; padding: 0.1rem 0.3rem; background: var(--border); color: var(--dim); border-radius: 3px; margin-left: 0.5rem;">Not Run</span>
+                    </div>
+                    <button class="btn btn-primary" id="run-tuning-btn" onclick="runTuningAnalysis()" style="width: 100%;">
+                        Run Tuning Analysis
+                    </button>
+                    <div id="tuning-progress" style="display: none; margin-top: 0.5rem;">
+                        <div class="loading">
+                            <div class="spinner"></div>
+                            <span>Analyzing detection vs ground truth...</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Optimal Threshold -->
+                <div class="sidebar-section" id="threshold-section" style="display: none;">
+                    <div class="section-title">Optimal Threshold</div>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem;">
+                        <div class="stat-card" style="padding: 0.5rem;">
+                            <div class="stat-label">Z-Warning</div>
+                            <div class="stat-value" id="optimal-z-warning" style="color: var(--yellow);">—</div>
+                        </div>
+                        <div class="stat-card" style="padding: 0.5rem;">
+                            <div class="stat-label">Z-Critical</div>
+                            <div class="stat-value" id="optimal-z-critical" style="color: var(--red);">—</div>
+                        </div>
+                    </div>
+                    <div style="margin-top: 0.5rem; display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem;">
+                        <div class="stat-card" style="padding: 0.5rem;">
+                            <div class="stat-label">Detection Rate</div>
+                            <div class="stat-value" id="detection-rate" style="color: var(--green);">—</div>
+                        </div>
+                        <div class="stat-card" style="padding: 0.5rem;">
+                            <div class="stat-label">Avg Lead Time</div>
+                            <div class="stat-value" id="avg-lead-time" style="color: var(--accent);">—</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Best Metrics by Fault Type -->
+                <div class="sidebar-section" id="signatures-section" style="display: none;">
+                    <div class="section-title">Best Metrics by Fault Type</div>
+                    <div id="fault-signatures" style="font-size: 0.7rem;"></div>
+                </div>
+
+                <!-- Metric Rankings -->
+                <div class="sidebar-section" id="rankings-section" style="display: none;">
+                    <div class="section-title collapsible" onclick="toggleSection(this)">
+                        Metric Rankings
+                        <span class="toggle-icon">▼</span>
+                    </div>
+                    <div class="section-content" id="metric-rankings" style="font-size: 0.7rem; max-height: 200px; overflow-y: auto;"></div>
+                </div>
+
+                <!-- Generate Config -->
+                <div class="sidebar-section" id="generate-config-section" style="display: none;">
+                    <div class="section-title">Apply Tuning</div>
+                    <button class="btn" onclick="generateTunedConfig()" style="width: 100%;">
+                        Generate Tuned Config
+                    </button>
+                    <div id="tuned-config-result" style="display: none; margin-top: 0.5rem;">
+                        <pre id="tuned-config-json" style="background: var(--input); padding: 0.5rem; border-radius: 4px; font-size: 0.65rem; max-height: 150px; overflow: auto;"></pre>
+                        <button class="btn btn-sm" onclick="copyTunedConfig()" style="margin-top: 0.3rem;">Copy Config</button>
+                    </div>
+                </div>
+
+                <!-- Recommendations -->
+                <div class="sidebar-section" id="recommendations-section" style="display: none;">
+                    <div class="section-title collapsible" onclick="toggleSection(this)">
+                        Recommendations
+                        <span class="toggle-icon">▼</span>
+                    </div>
+                    <div class="section-content readme-content" id="tuning-recommendations" style="font-size: 0.7rem; max-height: 200px; overflow-y: auto;"></div>
                 </div>
             </div>
 
@@ -1184,9 +1329,9 @@
     <!-- Unit Assignment Modal -->
     <div class="modal-overlay" id="unit-modal">
         <div class="modal" style="max-width: 600px;">
-            <div class="modal-title">Assign Units to Signals</div>
+            <div class="modal-title">Assign Units to Sensors</div>
             <div style="margin-bottom: 12px; color: var(--dim);">
-                Units are required for all signals. Select from common units or enter custom.
+                Units are required for all sensors. Select from common units or enter custom.
             </div>
             <div id="unit-assignment-list" style="max-height: 400px; overflow-y: auto;"></div>
             <div id="llm-suggest-section" style="margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); display: none;">
@@ -1610,7 +1755,7 @@ ORTHON is the intelligent orchestration layer for PRISM compute engines.
 
 ### Key Features
 
-- **File Inspection**: Automatically detect units, constants, and signal types
+- **File Inspection**: Automatically detect units, constants, and sensor types
 - **Pre-flight Validation**: Verify data before sending to PRISM
 - **SQL Queries**: Run DuckDB queries against results
 - **Physics Routing**: Route to appropriate engines based on detected quantities
@@ -1739,7 +1884,7 @@ const ENGINE_LABELS = {
 
 // Engine group metadata
 const ENGINE_GROUPS = {
-    signal: { label: 'Signal', color: 'var(--green)', icon: '━' },
+    signal: { label: 'Sensor', color: 'var(--green)', icon: '━' },
     pair: { label: 'Pair →', color: 'var(--accent)', icon: '→' },
     symmetric_pair: { label: 'Pair ↔', color: 'var(--purple)', icon: '↔' },
     windowed: { label: 'Windowed', color: 'var(--yellow)', icon: '▤' },
@@ -1983,7 +2128,7 @@ async function inspectFile(file) {
         // Signals
         const signals = lastInspection.signals?.filter(s => !s.is_entity_id && !s.is_sequence && !s.is_constant) || [];
         html += `<div style="margin-bottom: 0.5rem;">`;
-        html += `<span style="color: var(--dim);">Signals:</span> `;
+        html += `<span style="color: var(--dim);">Sensors:</span> `;
         html += `<span style="color: var(--accent);">${signals.length}</span>`;
         html += `</div>`;
 
@@ -2256,10 +2401,10 @@ async function runPreflightChecks() {
         });
 
         checks.push({
-            name: 'Signal columns',
+            name: 'Sensor columns',
             status: signalCols.length > 0 ? 'ok' : 'warn',
-            detail: `${signalCols.length} numeric signal columns detected`,
-            message: signalCols.length === 0 ? 'No signal columns detected - check data format' : null
+            detail: `${signalCols.length} numeric sensor columns detected`,
+            message: signalCols.length === 0 ? 'No sensor columns detected - check data format' : null
         });
 
         // 5. Null value check (sample first few columns)
@@ -2300,7 +2445,7 @@ async function runPreflightChecks() {
                 checks.push({
                     name: 'Units detected',
                     status: 'ok',
-                    detail: `${withUnits.length} signals with units (${withUnits.slice(0, 3).map(s => s.unit).join(', ')}${withUnits.length > 3 ? '...' : ''})`
+                    detail: `${withUnits.length} sensors with units (${withUnits.slice(0, 3).map(s => s.unit).join(', ')}${withUnits.length > 3 ? '...' : ''})`
                 });
             }
 
@@ -2309,7 +2454,7 @@ async function runPreflightChecks() {
                 checks.push({
                     name: 'Missing units',
                     status: 'error',
-                    detail: `${withoutUnits.length} signal(s) without units`,
+                    detail: `${withoutUnits.length} sensor(s) without units`,
                     message: 'Units are required. Click "Assign Units" to add them.',
                     action: 'assign-units'
                 });
@@ -2330,9 +2475,9 @@ async function runPreflightChecks() {
 
             if (missingQuantity.length > 0 && lastInspection.units_detected === 0) {
                 checks.push({
-                    name: 'Signal metadata',
+                    name: 'Sensor metadata',
                     status: 'warn',
-                    detail: `${missingQuantity.length} signal(s) missing quantity/unit info`,
+                    detail: `${missingQuantity.length} sensor(s) missing quantity/unit info`,
                     message: 'Consider adding units to column names (e.g., pressure_PSI)'
                 });
             }
@@ -2414,12 +2559,14 @@ function showPreflightModal(checks) {
         submitBtn.disabled = true;
         fixBtn.style.display = 'inline-block';
     } else if (hasWarnings) {
-        submitBtn.textContent = 'Submit';
+        submitBtn.textContent = 'Submit Anyway';
         submitBtn.className = 'btn btn-primary';
+        submitBtn.disabled = false;
         fixBtn.style.display = 'none';
     } else {
         submitBtn.textContent = 'Submit';
         submitBtn.className = 'btn btn-primary';
+        submitBtn.disabled = false;
         fixBtn.style.display = 'none';
     }
 
@@ -2523,7 +2670,7 @@ function displayManifestPreview(manifest) {
     let html = '';
 
     const typeLabels = {
-        signal: { label: 'Signal', color: 'var(--green)', desc: 'Per-signal metrics' },
+        signal: { label: 'Sensor', color: 'var(--green)', desc: 'Per-sensor metrics' },
         pair: { label: 'Pair (Directional)', color: 'var(--accent)', desc: 'Causality analysis' },
         symmetric_pair: { label: 'Pair (Symmetric)', color: 'var(--purple)', desc: 'Correlation metrics' },
         windowed: { label: 'Windowed', color: 'var(--yellow)', desc: 'Rolling calculations' },
@@ -2622,6 +2769,8 @@ window.autoFixWithAI = async function() {
 // =====================================================================
 
 const COMMON_UNITS = [
+    // Index/Sequence (first - for the primary axis column)
+    { unit: 'index', quantity: 'index', label: 'INDEX (row/sequence number)' },
     // Pressure
     { unit: 'PSI', quantity: 'pressure', label: 'PSI (pressure)' },
     { unit: 'kPa', quantity: 'pressure', label: 'kPa (pressure)' },
@@ -2670,6 +2819,8 @@ const UNIT_ALIASES = {
     'hertz': 'Hz',
     'meter': 'm', 'meters': 'm',
     'kilogram': 'kg',
+    // Index types
+    'REMOVE': 'index', 'remove': 'index', 'row_number': 'index', 'sequence': 'index',
 };
 
 let signalUnits = {}; // Store user-assigned units
@@ -2680,7 +2831,7 @@ window.showUnitAssignment = function() {
     const list = $('unit-assignment-list');
 
     if (!lastInspection?.signals) {
-        list.innerHTML = '<div style="color: var(--red);">No signals detected. Load a file first.</div>';
+        list.innerHTML = '<div style="color: var(--red);">No sensors detected. Load a file first.</div>';
         modal.classList.add('visible');
         return;
     }
@@ -2759,7 +2910,7 @@ window.applyUnits = function() {
     const missingUnits = dataSignals.filter(s => !s.unit && !(s.name in signalUnits));
 
     if (missingUnits.length > 0) {
-        alert(`Still missing units for ${missingUnits.length} signal(s): ${missingUnits.map(s => s.name).slice(0, 3).join(', ')}${missingUnits.length > 3 ? '...' : ''}`);
+        alert(`Still missing units for ${missingUnits.length} sensor(s): ${missingUnits.map(s => s.name).slice(0, 3).join(', ')}${missingUnits.length > 3 ? '...' : ''}`);
         return;
     }
 
@@ -2770,7 +2921,7 @@ window.applyUnits = function() {
 
 window.suggestUnitsWithLLM = async function() {
     const status = $('llm-status');
-    status.textContent = 'Analyzing signals...';
+    status.textContent = 'Analyzing sensors...';
     status.style.color = 'var(--accent)';
 
     try {
@@ -2857,23 +3008,60 @@ window.submitToPRISM = async function() {
         formData.append('window_size', $('window-size').value);
         formData.append('window_stride', $('window-stride').value);
 
+        // Add user-assigned units for each column
+        if (Object.keys(signalUnits).length > 0) {
+            formData.append('units', JSON.stringify(signalUnits));
+        }
+
         // Add user-entered constants
         const constants = getUserConstants();
         if (Object.keys(constants).length > 0) {
             formData.append('constants', JSON.stringify(constants));
         }
 
-        progressText.textContent = 'Computing...';
+        progressText.textContent = 'Submitting job...';
 
         const r = await fetch('/api/prism/compute', {
             method: 'POST',
             body: formData,
         });
 
-        const result = await r.json();
+        let result = await r.json();
 
         if (!r.ok) {
             throw new Error(result.detail || 'PRISM computation failed');
+        }
+
+        // Handle queued jobs - poll until complete
+        if (result.status === 'queued') {
+            progressText.textContent = `Queued at position ${result.queue_position}. Waiting...`;
+
+            // Poll for job completion
+            const jobId = result.job_id;
+            while (true) {
+                await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds
+
+                const statusR = await fetch(`/api/prism/job/${jobId}`);
+                const status = await statusR.json();
+
+                if (status.status === 'complete') {
+                    // Job done - get the results
+                    result = {
+                        status: 'complete',
+                        job_id: jobId,
+                        files: status.outputs || [],
+                        file_urls: status.outputs?.map(f => `/api/prism/results/${status.results_path?.split('/').pop() || jobId}/${f}`) || [],
+                    };
+                    break;
+                } else if (status.status === 'failed') {
+                    throw new Error(status.error || 'Job failed');
+                } else if (status.status === 'running') {
+                    progressText.textContent = 'Computing...';
+                } else {
+                    const pos = status.queue_position || '?';
+                    progressText.textContent = `Queued at position ${pos}. Waiting...`;
+                }
+            }
         }
 
         progressText.textContent = 'Loading results...';
@@ -2882,12 +3070,30 @@ window.submitToPRISM = async function() {
         const tableSelect = $('table-select');
         tableSelect.innerHTML = '<option value="data">data (original)</option>';
 
-        for (const url of result.parquet_urls || []) {
+        // Handle both old format (parquet_urls) and new format (file_urls)
+        const resultUrls = result.file_urls || result.parquet_urls || [];
+        const jobId = result.job_id;
+
+        for (const url of resultUrls) {
+            // Use ORTHON proxy to fetch from PRISM (avoids CORS)
+            // Convert /results/job_id/file.parquet to /api/prism/results/job_id/file.parquet
+            let fullUrl;
+            if (url.startsWith('/results/') && jobId) {
+                fullUrl = `/api/prism${url}`;
+            } else if (url.startsWith('http')) {
+                fullUrl = url;
+            } else {
+                fullUrl = `/api/prism/results/${jobId}/${url.split('/').pop()}`;
+            }
             const tableName = url.split('/').pop().replace('.parquet', '');
 
             try {
                 // Fetch the parquet file
-                const parquetResponse = await fetch(url);
+                const parquetResponse = await fetch(fullUrl);
+                if (!parquetResponse.ok) {
+                    console.warn(`Failed to fetch ${tableName}: ${parquetResponse.status}`);
+                    continue;
+                }
                 const parquetBuffer = await parquetResponse.arrayBuffer();
                 const filename = `${tableName}.parquet`;
 
@@ -2907,13 +3113,14 @@ window.submitToPRISM = async function() {
         }
 
         progress.style.display = 'none';
-        setSt('prism', `Done: ${result.parquets?.length || 0} tables`, 'ok');
+        const fileCount = result.files?.length || result.parquets?.length || resultUrls.length;
+        setSt('prism', `Done: ${fileCount} tables`, 'ok');
 
         // Mark all engines as computed
         markAllEnginesComputed();
 
         // Store URLs and show download button
-        lastParquetUrls = result.parquet_urls || [];
+        lastParquetUrls = resultUrls;
         if (lastParquetUrls.length > 0) {
             $('download-section').style.display = 'block';
         }
@@ -3169,7 +3376,7 @@ const EXAMPLE_CONFIG = {
         mechanics: true
     },
     engines: {
-        core: ["hurst", "entropy", "lyapunov", "trend", "stationarity"],
+        core: ["hurst", "entropy", "trend", "stationarity"],  // lyapunov in dynamics
         domain: []
     }
 };
@@ -3743,7 +3950,7 @@ const SQL_DOCS = [
     { id: '00_load', name: 'Load Data', desc: 'Load observations into database' },
     { id: '01_calculus', name: 'Calculus', desc: 'Derivatives, curvature, arc length' },
     { id: '02_statistics', name: 'Statistics', desc: 'Rolling stats, z-scores, ACF' },
-    { id: '03_signal_class', name: 'Signal Class', desc: 'Signal classification' },
+    { id: '03_signal_class', name: 'Sensor Class', desc: 'Sensor classification' },
     { id: '04_typology', name: 'Typology', desc: 'Behavioral type detection' },
     { id: '05_geometry', name: 'Geometry', desc: 'Correlations, coupling network' },
     { id: '06_dynamics', name: 'Dynamics', desc: 'Regime detection, transitions' },
@@ -3753,7 +3960,7 @@ const SQL_DOCS = [
     { id: '10_manifold', name: 'Manifold', desc: 'Final assembly, export' },
     { id: '00_index_detection', name: 'Index Detection', desc: 'Time/space index detection' },
     { id: '00_observations', name: 'Observations', desc: 'Canonical schema creation' },
-    { id: '01_classification_units', name: 'Unit Classification', desc: 'Unit-based signal classes' },
+    { id: '01_classification_units', name: 'Unit Classification', desc: 'Unit-based sensor classes' },
     { id: '06_general_views', name: 'General Views', desc: 'Dashboard views' },
     { id: '11_ml_features', name: 'ML Features', desc: 'Machine learning feature extraction' },
 ];
@@ -3818,6 +4025,164 @@ async function generateMarkdowns() {
         }
     } catch (e) {
         $('markdown-status').innerHTML = `<span style="color:var(--red);">Error: ${e.message}</span>`;
+    }
+}
+
+// =====================================================================
+// AI-GUIDED TUNING
+// =====================================================================
+
+let tuningResult = null;  // Store last tuning result
+
+async function runTuningAnalysis() {
+    const progress = $('tuning-progress');
+    const btn = $('run-tuning-btn');
+    const badge = $('tuning-status-badge');
+
+    progress.style.display = 'block';
+    btn.disabled = true;
+    badge.textContent = 'Running...';
+    badge.style.background = 'var(--yellow)';
+
+    try {
+        const resp = await fetch('/api/tuning/analyze', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({})
+        });
+
+        if (!resp.ok) {
+            const error = await resp.json();
+            throw new Error(error.detail || 'Tuning analysis failed');
+        }
+
+        tuningResult = await resp.json();
+        displayTuningResults(tuningResult);
+
+        badge.textContent = 'Complete';
+        badge.style.background = 'var(--green)';
+
+    } catch (e) {
+        badge.textContent = 'Error';
+        badge.style.background = 'var(--red)';
+        alert('Tuning error: ' + e.message);
+    } finally {
+        progress.style.display = 'none';
+        btn.disabled = false;
+    }
+}
+
+function displayTuningResults(result) {
+    // Show optimal threshold section
+    $('threshold-section').style.display = 'block';
+    $('optimal-z-warning').textContent = result.optimal_z_threshold?.toFixed(1) || '—';
+    $('optimal-z-critical').textContent = ((result.optimal_z_threshold || 2.5) + 1.0).toFixed(1);
+    $('detection-rate').textContent = (result.detection_rate?.toFixed(1) || '—') + '%';
+    $('avg-lead-time').textContent = (result.avg_lead_time?.toFixed(1) || '—') + ' samples';
+
+    // Show fault signatures
+    if (result.best_metrics_by_fault_type && Object.keys(result.best_metrics_by_fault_type).length > 0) {
+        $('signatures-section').style.display = 'block';
+        const sigHtml = Object.entries(result.best_metrics_by_fault_type)
+            .map(([fault, metric]) => `
+                <div style="display: flex; justify-content: space-between; padding: 0.3rem 0; border-bottom: 1px solid var(--border);">
+                    <span style="color: var(--dim);">${fault}</span>
+                    <span style="color: var(--accent); font-weight: 500;">${metric}</span>
+                </div>
+            `).join('');
+        $('fault-signatures').innerHTML = sigHtml;
+    }
+
+    // Show metric rankings
+    if (result.metric_rankings && result.metric_rankings.length > 0) {
+        $('rankings-section').style.display = 'block';
+        const rankHtml = result.metric_rankings.map((m, i) => `
+            <div style="display: flex; align-items: center; gap: 0.5rem; padding: 0.25rem 0; border-bottom: 1px solid var(--border);">
+                <span style="color: var(--dim); width: 1rem;">${i + 1}.</span>
+                <span style="flex: 1;">${m.metric_name}</span>
+                <span style="color: var(--green); font-size: 0.65rem;">${m.detection_rate_pct?.toFixed(0) || '—'}%</span>
+                <span style="color: var(--accent); font-size: 0.65rem;">${m.avg_lead_time?.toFixed(0) || '—'}</span>
+            </div>
+        `).join('');
+        $('metric-rankings').innerHTML = `
+            <div style="display: flex; gap: 0.5rem; padding: 0.25rem 0; font-size: 0.6rem; color: var(--dim); text-transform: uppercase;">
+                <span style="width: 1rem;">#</span>
+                <span style="flex: 1;">Metric</span>
+                <span>Det%</span>
+                <span>Lead</span>
+            </div>
+            ${rankHtml}
+        `;
+    }
+
+    // Show recommendations
+    if (result.recommendations) {
+        $('recommendations-section').style.display = 'block';
+        $('tuning-recommendations').innerHTML = renderMarkdown(result.recommendations);
+    }
+
+    // Show generate config button
+    $('generate-config-section').style.display = 'block';
+}
+
+async function generateTunedConfig() {
+    try {
+        const resp = await fetch('/api/tuning/generate-config', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({})
+        });
+
+        if (!resp.ok) {
+            const error = await resp.json();
+            throw new Error(error.detail || 'Config generation failed');
+        }
+
+        const config = await resp.json();
+        $('tuned-config-json').textContent = JSON.stringify(config, null, 2);
+        $('tuned-config-result').style.display = 'block';
+
+    } catch (e) {
+        alert('Error generating config: ' + e.message);
+    }
+}
+
+function copyTunedConfig() {
+    const configText = $('tuned-config-json').textContent;
+    navigator.clipboard.writeText(configText).then(() => {
+        const btn = event.target;
+        const originalText = btn.textContent;
+        btn.textContent = 'Copied!';
+        setTimeout(() => btn.textContent = originalText, 1500);
+    });
+}
+
+function toggleSection(titleElement) {
+    titleElement.classList.toggle('collapsed');
+    const content = titleElement.nextElementSibling;
+    content.classList.toggle('collapsed');
+}
+
+async function checkLabels() {
+    // Check if labels are available in loaded data
+    try {
+        const resp = await fetch('/api/tuning/labels');
+        if (resp.ok) {
+            const data = await resp.json();
+            if (data.labels && data.labels.length > 0) {
+                $('labels-count').textContent = `${data.labels.length} found`;
+                $('labels-info').style.display = 'none';
+                $('labels-list').style.display = 'block';
+                $('labels-list').innerHTML = data.labels.map(l => `
+                    <div style="display: flex; justify-content: space-between; padding: 0.2rem 0; font-size: 0.7rem; border-bottom: 1px solid var(--border);">
+                        <span style="color: var(--accent);">${l.label_name}</span>
+                        <span style="color: var(--dim);">${l.n_entities} entities</span>
+                    </div>
+                `).join('');
+            }
+        }
+    } catch (e) {
+        // Labels not available, show default message
     }
 }
 

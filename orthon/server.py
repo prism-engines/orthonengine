@@ -119,6 +119,129 @@ async def health():
     }
 
 
+@app.get("/api/ai/status")
+async def ai_status():
+    """Check if AI assistance is available."""
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    return {
+        "available": bool(api_key),
+        "message": "Ready" if api_key else "ANTHROPIC_API_KEY not set"
+    }
+
+
+@app.get("/api/prism/status")
+async def prism_status():
+    """Check PRISM server status."""
+    prism_url = os.environ.get("PRISM_URL", "http://localhost:8001")
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            resp = await client.get(f"{prism_url}/health")
+            if resp.status_code == 200:
+                return {"available": True, "status": "Connected", "url": prism_url}
+    except Exception:
+        pass
+    return {"available": False, "status": "Not connected", "url": prism_url}
+
+
+@app.get("/api/load-parquets")
+async def load_parquets(path: str):
+    """
+    List parquet files in a directory for loading in the dashboard.
+    Returns paths that the browser can use with DuckDB-WASM.
+    """
+    from pathlib import Path as P
+
+    dir_path = P(path)
+    if not dir_path.exists():
+        raise HTTPException(status_code=404, detail=f"Path not found: {path}")
+
+    if not dir_path.is_dir():
+        raise HTTPException(status_code=400, detail=f"Not a directory: {path}")
+
+    # Expected parquet files
+    expected = [
+        'observations.parquet',
+        'vector.parquet',
+        'geometry.parquet',
+        'physics.parquet',
+        'dynamics.parquet',
+        'topology.parquet',
+        'information_flow.parquet',
+    ]
+
+    files = {}
+    for name in expected:
+        file_path = dir_path / name
+        if file_path.exists():
+            # Return the table name (without .parquet) and full path
+            table_name = name.replace('.parquet', '')
+            files[table_name] = str(file_path)
+
+    if not files:
+        raise HTTPException(status_code=404, detail=f"No parquet files found in: {path}")
+
+    return {"files": files, "path": path}
+
+
+class AIInterpretRequest(BaseModel):
+    tables: list[str]
+    context: str = ""
+
+
+@app.post("/api/ai/interpret")
+async def ai_interpret(request: AIInterpretRequest):
+    """
+    Generate AI interpretation of analysis results.
+    """
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+
+    if not api_key:
+        raise HTTPException(
+            status_code=503,
+            detail="ANTHROPIC_API_KEY not set"
+        )
+
+    try:
+        import anthropic
+    except ImportError:
+        raise HTTPException(
+            status_code=503,
+            detail="anthropic package not installed"
+        )
+
+    tables_str = ", ".join(request.tables)
+
+    prompt = f"""You are an expert in structural health monitoring and time series analysis.
+
+The user has loaded the following data tables: {tables_str}
+
+These come from the ORTHON/PRISM four-pillar analysis system:
+- Geometry: Eigenvalue coherence, effective dimension, signal coupling
+- Dynamics: Lyapunov exponents, RQA metrics (determinism, laminarity)
+- Topology: Betti numbers, persistence homology, attractor shape
+- Information: Transfer entropy, causal hierarchy, feedback loops
+
+Based on the available data, provide a brief interpretation of what analyses are available
+and what insights they can provide. Keep it concise (2-3 paragraphs).
+
+{f'Additional context: {request.context}' if request.context else ''}"""
+
+    client = anthropic.Anthropic(api_key=api_key)
+
+    try:
+        message = client.messages.create(
+            model="claude-3-5-haiku-20241022",
+            max_tokens=500,
+            messages=[{"role": "user", "content": prompt}]
+        )
+
+        return {"interpretation": message.content[0].text}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"AI error: {e}")
+
+
 # ============================================================================
 # Markdown Generation
 # ============================================================================
@@ -196,6 +319,12 @@ async def root():
     return FileResponse(STATIC_DIR / "index.html")
 
 
+@app.get("/v2")
+async def dashboard_v2():
+    """Serve the new restructured dashboard (index_v2.html)"""
+    return FileResponse(STATIC_DIR / "index_v2.html")
+
+
 # Mount static files for everything else
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
@@ -208,13 +337,15 @@ if __name__ == "__main__":
     import uvicorn
 
     port = int(os.environ.get("PORT", 8000))
+    api_status = '✓ Set' if os.environ.get('ANTHROPIC_API_KEY') else '✗ Not set'
     print(f"""
 ╔═══════════════════════════════════════════════════════════╗
 ║  ORTHON Server                                            ║
 ╠═══════════════════════════════════════════════════════════╣
-║  http://localhost:{port}                                    ║
+║  Dashboard:  http://localhost:{port}                        ║
+║  New UI:     http://localhost:{port}/v2                     ║
 ║                                                           ║
-║  API Key: {'✓ Set' if os.environ.get('ANTHROPIC_API_KEY') else '✗ Not set (export ANTHROPIC_API_KEY=...)'}                              ║
+║  AI Assist:  {api_status:<43} ║
 ╚═══════════════════════════════════════════════════════════╝
 """)
 

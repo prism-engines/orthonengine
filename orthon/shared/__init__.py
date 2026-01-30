@@ -24,15 +24,22 @@ from .window_config import (
 )
 from .engine_registry import (
     Granularity,
+    Pillar,
     EngineSpec,
     UNIT_TO_CATEGORY,
-    CATEGORY_TO_ENGINES,
     ENGINE_SPECS,
     get_engines_for_categories,
     get_universal_engines,
     get_domain_engines,
+    get_engines_by_pillar,
     get_category_for_unit,
-    get_all_categories,
+)
+from .physics_constants import (
+    PhysicsConstants,
+    ENERGY_FORMULAS,
+    VALID_UNIT_CATEGORIES,
+    can_compute_real_energy,
+    get_unit_category,
 )
 
 __all__ = [
@@ -59,13 +66,19 @@ __all__ = [
     'COMPUTE_LIMITS',
     # Engine Registry
     'Granularity',
+    'Pillar',
     'EngineSpec',
     'UNIT_TO_CATEGORY',
-    'CATEGORY_TO_ENGINES',
     'ENGINE_SPECS',
     'get_engines_for_categories',
     'get_universal_engines',
     'get_domain_engines',
+    'get_engines_by_pillar',
     'get_category_for_unit',
-    'get_all_categories',
+    # Physics Constants
+    'PhysicsConstants',
+    'ENERGY_FORMULAS',
+    'VALID_UNIT_CATEGORIES',
+    'can_compute_real_energy',
+    'get_unit_category',
 ]

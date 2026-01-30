@@ -8,12 +8,12 @@ const ORTHON_QUERIES = {
   // SIGNAL TYPOLOGY - Per-signal characterization
   // ============================================================
   typology: {
-    label: "Signal Typology",
+    label: "Sensor Typology",
     queries: [
       {
         id: "typology_summary",
-        name: "Signal Summary",
-        description: "Overview of all signals with key metrics",
+        name: "Sensor Summary",
+        description: "Overview of all sensors with key metrics",
         sql: `
 SELECT
     signal_id,
@@ -29,8 +29,8 @@ ORDER BY signal_id
       },
       {
         id: "typology_characterization",
-        name: "Signal Characterization",
-        description: "Classify signals by memory, complexity, stationarity",
+        name: "Sensor Characterization",
+        description: "Classify sensors by memory, complexity, stationarity",
         sql: `
 SELECT
     signal_id,
@@ -59,7 +59,7 @@ ORDER BY signal_id, window_idx
       {
         id: "typology_evolution",
         name: "Metric Evolution Over Time",
-        description: "Track how signal properties change across windows",
+        description: "Track how sensor properties change across windows",
         sql: `
 SELECT
     window_idx,
@@ -117,7 +117,7 @@ ORDER BY t.window_idx
       {
         id: "geometry_correlation_matrix",
         name: "Correlation Matrix",
-        description: "Pairwise correlations between all signals",
+        description: "Pairwise correlations between all sensors",
         sql: `
 SELECT
     signal_a,
@@ -132,7 +132,7 @@ ORDER BY ABS(correlation) DESC
       {
         id: "geometry_coupling_strength",
         name: "Coupling Strength Over Time",
-        description: "How signal relationships evolve across windows",
+        description: "How sensor relationships evolve across windows",
         sql: `
 SELECT
     window_idx,
@@ -152,7 +152,7 @@ ORDER BY window_idx, signal_a, signal_b
       {
         id: "geometry_cluster_candidates",
         name: "Cluster Candidates",
-        description: "Signal groups with high mutual correlation",
+        description: "Sensor groups with high mutual correlation",
         sql: `
 WITH strong_pairs AS (
     SELECT signal_a, signal_b, correlation
@@ -173,7 +173,7 @@ ORDER BY n_strong_connections DESC
       {
         id: "geometry_decoupling_events",
         name: "Decoupling Events",
-        description: "Windows where previously coupled signals diverge",
+        description: "Windows where previously coupled sensors diverge",
         sql: `
 WITH lagged AS (
     SELECT
@@ -306,7 +306,7 @@ ORDER BY window_idx
       {
         id: "mechanics_transfer_entropy",
         name: "Information Flow",
-        description: "Transfer entropy between signal pairs",
+        description: "Transfer entropy between sensor pairs",
         sql: `
 SELECT
     source_signal,
@@ -364,7 +364,7 @@ ORDER BY weight DESC
       {
         id: "mechanics_drivers",
         name: "System Drivers",
-        description: "Signals that drive others vs respond to others",
+        description: "Sensors that drive others vs respond to others",
         sql: `
 WITH outflow AS (
     SELECT
@@ -419,8 +419,8 @@ LIMIT 1000
       },
       {
         id: "vector_summary",
-        name: "Vector Summary by Signal",
-        description: "Aggregate metrics per signal",
+        name: "Vector Summary by Sensor",
+        description: "Aggregate metrics per sensor",
         sql: `
 SELECT
     entity_id,
@@ -499,8 +499,8 @@ FROM orthon_windows
       },
       {
         id: "infra_signals",
-        name: "Signal Inventory",
-        description: "List of all signals with basic stats",
+        name: "Sensor Inventory",
+        description: "List of all sensors with basic stats",
         sql: `
 SELECT DISTINCT
     signal_id,
@@ -533,7 +533,7 @@ SHOW TABLES
       {
         id: "validation_unit_consistency",
         name: "Unit Consistency",
-        description: "Check signal units match expected engine requirements",
+        description: "Check sensor units match expected engine requirements",
         sql: `
 SELECT
     signal_id,
@@ -555,7 +555,7 @@ ORDER BY signal_id
       {
         id: "validation_null_check",
         name: "Null Value Check",
-        description: "Find signals with excessive null values",
+        description: "Find sensors with excessive null values",
         sql: `
 SELECT
     signal_id,
