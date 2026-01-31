@@ -6,17 +6,21 @@ Orchestrates the full compute workflow:
 
 1. User uploads data
 2. Orthon creates observations.parquet
-3. Orthon analyzes data (units, signals, sampling)
-4. Orthon builds manifest (what PRISM should compute)
-5. Orthon sends manifest + data to PRISM
-6. PRISM computes, pings callback
-7. Orthon fetches results, processes, presents to user
+3. Orthon runs cohort discovery (optional, recommended for > 20 signals)
+4. Orthon analyzes data (units, signals, sampling)
+5. Orthon builds manifest (what PRISM should compute)
+6. Orthon sends manifest + data to PRISM
+7. PRISM computes, pings callback
+8. Orthon fetches results, processes, presents to user
 """
 
 import os
 from pathlib import Path
 from typing import Dict, Any, Optional, Union
 from dataclasses import asdict
+import tempfile
+
+import polars as pl
 
 from ..intake.config_generator import (
     DataAnalyzer,
@@ -27,6 +31,11 @@ from ..intake.config_generator import (
 from ..intake.manifest_schema import PrismManifest
 from ..prism_client import get_prism_client, get_async_prism_client, ORTHON_URL
 from .job_manager import JobManager, JobStatus, Job, get_job_manager
+from ..analysis import (
+    CohortDiscovery,
+    CohortResult,
+    should_run_cohort_discovery,
+)
 
 
 class ComputePipeline:
@@ -73,6 +82,7 @@ class ComputePipeline:
         window_stride: int = 50,
         constants: Optional[Dict[str, Any]] = None,
         callback_url: Optional[str] = None,
+        run_cohort_discovery: Optional[bool] = None,
     ) -> Job:
         """
         Submit a compute job.
@@ -87,6 +97,8 @@ class ComputePipeline:
             window_stride: Stride between windows
             constants: Global constants for physics calculations
             callback_url: Override callback URL (uses default if None)
+            run_cohort_discovery: Run cohort discovery to filter out constants/orphans.
+                                  If None, auto-decides based on signal/row count.
 
         Returns:
             Job object with job_id for tracking
@@ -94,6 +106,18 @@ class ComputePipeline:
         observations_path = Path(observations_path)
         if not observations_path.exists():
             raise FileNotFoundError(f"Observations not found: {observations_path}")
+
+        # Step 0: Optional cohort discovery
+        cohort_result = None
+        if run_cohort_discovery is not None:
+            do_cohort = run_cohort_discovery
+        else:
+            # Auto-decide
+            df = pl.read_parquet(observations_path)
+            do_cohort, reason = should_run_cohort_discovery(df)
+
+        if do_cohort:
+            observations_path, cohort_result = self._run_cohort_discovery(observations_path)
 
         # Step 1: Analyze data
         analyzer = DataAnalyzer(observations_path)
@@ -125,6 +149,10 @@ class ComputePipeline:
             output_dir=str(output_dir),
         )
         job.job_id = job_id  # Use manifest's job_id
+
+        # Add cohort discovery results to job metadata
+        if cohort_result:
+            job.cohort_discovery = cohort_result.to_dict()
 
         # Step 4: Build callback URL
         if callback_url is None:
@@ -173,6 +201,7 @@ class ComputePipeline:
         window_stride: int = 50,
         constants: Optional[Dict[str, Any]] = None,
         callback_url: Optional[str] = None,
+        run_cohort_discovery: Optional[bool] = None,
     ) -> Job:
         """
         Submit a compute job (async version).
@@ -182,6 +211,18 @@ class ComputePipeline:
         observations_path = Path(observations_path)
         if not observations_path.exists():
             raise FileNotFoundError(f"Observations not found: {observations_path}")
+
+        # Step 0: Optional cohort discovery
+        cohort_result = None
+        if run_cohort_discovery is not None:
+            do_cohort = run_cohort_discovery
+        else:
+            # Auto-decide
+            df = pl.read_parquet(observations_path)
+            do_cohort, reason = should_run_cohort_discovery(df)
+
+        if do_cohort:
+            observations_path, cohort_result = self._run_cohort_discovery(observations_path)
 
         # Step 1: Analyze data
         analyzer = DataAnalyzer(observations_path)
@@ -210,6 +251,10 @@ class ComputePipeline:
             output_dir=str(output_dir),
         )
         job.job_id = job_id
+
+        # Add cohort discovery results to job metadata
+        if cohort_result:
+            job.cohort_discovery = cohort_result.to_dict()
 
         # Step 4: Build callback URL
         if callback_url is None:
@@ -368,6 +413,51 @@ class ComputePipeline:
             "analysis": job.analysis,
             "completed_at": job.completed_at,
         }
+
+    def _run_cohort_discovery(
+        self,
+        observations_path: Path,
+    ) -> tuple[Path, CohortResult]:
+        """
+        Run cohort discovery and return filtered observations.
+
+        Identifies constants (operational settings) and orphans (uncorrelated signals)
+        and filters them out to improve ML accuracy.
+
+        Args:
+            observations_path: Path to original observations.parquet
+
+        Returns:
+            Tuple of (filtered_observations_path, CohortResult)
+        """
+        # Run cohort discovery
+        cd = CohortDiscovery(observations_path=observations_path)
+        result = cd.discover()
+
+        # If no constants or orphans found, return original path
+        exclude_list = result.get_exclude_list()
+        if not exclude_list:
+            return observations_path, result
+
+        # Filter out constants and orphans
+        df = pl.read_parquet(observations_path)
+
+        # Detect signal column name
+        signal_col = next(
+            (c for c in ['signal_id', 'signal', 'sensor'] if c in df.columns),
+            'signal_id'
+        )
+
+        df_filtered = df.filter(~pl.col(signal_col).is_in(exclude_list))
+
+        # Write to temporary file
+        temp_dir = self.output_base_dir / "_cohort_filtered"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+
+        filtered_path = temp_dir / f"observations_filtered_{observations_path.stem}.parquet"
+        df_filtered.write_parquet(filtered_path)
+
+        return filtered_path, result
 
     def _analysis_to_dict(self, analysis: DataAnalysis) -> Dict[str, Any]:
         """Convert DataAnalysis to dict."""
