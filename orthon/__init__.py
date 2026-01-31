@@ -14,6 +14,9 @@ from orthon.intake import prepare_for_prism, transform_for_prism, IntakeTransfor
 from orthon.shared import PrismConfig, SignalInfo, DISCIPLINES
 from orthon.backend import get_backend, analyze, has_prism, get_backend_info
 
+# Prediction module - import directly from orthon.prediction when needed
+# from orthon.prediction import predict_rul, score_health, detect_anomalies
+
 # Display module deprecated - using static HTML at /static/index.html
 
 __all__ = [
@@ -37,4 +40,6 @@ __all__ = [
     'analyze',
     'has_prism',
     'get_backend_info',
+    # Prediction - import from orthon.prediction directly
+    # 'predict_rul', 'score_health', 'detect_anomalies',
 ]
