@@ -125,6 +125,9 @@ NO EXCEPTIONS. No subdirectories. No domain folders.
 
 | File | Purpose |
 |------|---------|
+| `orthon/manifest_generator.py` | **NEW** Creates v2 manifest from typology |
+| `orthon/engine_rules.yaml` | **NEW** Engine selection rules |
+| `orthon/sql/typology.sql` | **NEW** Signal classification SQL |
 | `orthon/ingest/paths.py` | Fixed output paths (NO EXCEPTIONS) |
 | `orthon/config/manifest.py` | ENGINES list (53), Pydantic models |
 | `orthon/config/domains.py` | 7 physics domains |
@@ -134,30 +137,83 @@ NO EXCEPTIONS. No subdirectories. No domain folders.
 
 ---
 
-## ENGINES List (orthon/config/manifest.py)
+## Unified Manifest System (v2.0)
 
-53 engines specified for PRISM to run:
+ORTHON decides. PRISM executes.
 
-### Tier 1: Basic Statistics (10)
-mean, std, rms, peak, crest_factor, shape_factor, impulse_factor, margin_factor, skewness, kurtosis
+### Workflow
+```
+1. ORTHON runs typology.sql on observations.parquet
+2. ORTHON generates manifest.yaml with per-signal engine selection
+3. PRISM receives manifest and executes EXACTLY what's specified
+```
 
-### Tier 2: Distribution (5)
-histogram, percentiles, iqr, mad, coefficient_of_variation
+### Manifest Generator
+```bash
+# Generate manifest from typology
+python -m orthon.manifest_generator data/typology.parquet data/manifest.yaml
+```
 
-### Tier 3: Information Theory (6)
-entropy_shannon, entropy_sample, entropy_permutation, entropy_spectral, mutual_information, transfer_entropy
+### Manifest v2.0 Structure
+```yaml
+version: "2.0"
+job:
+  id: prism_20260131_123456
+  name: C-MAPSS Analysis
+signals:
+  sensor_02:
+    is_constant: false
+    signal_type: SMOOTH
+    periodicity: PERIODIC
+    engines:
+      - kurtosis
+      - harmonics_ratio
+      - rolling_entropy
+  constant_signal:
+    is_constant: true
+    engines: []
+skip_signals:
+  - constant_signal
+engines_required:
+  signal: [kurtosis, skewness, entropy, ...]
+  rolling: [rolling_kurtosis, rolling_entropy, ...]
+```
 
-### Tier 4: Spectral (11)
-fft, psd, spectral_centroid, spectral_spread, spectral_rolloff, spectral_flatness, spectral_slope, spectral_entropy, spectral_peaks, harmonic_ratio, bandwidth
+---
 
-### Tier 5: Dynamics (10)
-lyapunov, correlation_dimension, hurst_exponent, dfa, recurrence_rate, determinism, laminarity, trapping_time, divergence, attractor_dimension
+## Engine Selection (Typology-Guided)
 
-### Tier 6: Topology (5)
-betti_0, betti_1, persistence_entropy, persistence_landscape, wasserstein_distance
+New architecture: ORTHON selects engines based on signal typology.
 
-### Tier 7: Relationships (6)
-cross_correlation, coherence, phase_coupling, granger_causality, cointegration, dtw_distance
+### Core Engines (always run)
+kurtosis, skewness, crest_factor
+
+### By Signal Type
+| Type | Engines |
+|------|---------|
+| SMOOTH | rolling_kurtosis, rolling_entropy, rolling_crest_factor |
+| NOISY | entropy, sample_entropy |
+| IMPULSIVE | crest_factor, peak_ratio |
+| MIXED | entropy, crest_factor, sample_entropy |
+
+### By Periodicity
+| Type | Engines |
+|------|---------|
+| PERIODIC | harmonics_ratio, band_ratios, spectral_entropy, thd |
+| QUASI_PERIODIC | band_ratios, spectral_entropy |
+| APERIODIC | entropy, hurst, sample_entropy |
+
+### By Tail Behavior
+| Type | Engines |
+|------|---------|
+| HEAVY_TAILS | kurtosis, crest_factor |
+| LIGHT_TAILS | entropy, sample_entropy |
+
+### Deprecated (absolute values)
+rms, peak, mean, std, rolling_rms, rolling_mean, rolling_std, envelope
+
+### Legacy Mode
+For backward compatibility: `python -m prism --legacy manifest.yaml` runs all 53 engines
 
 ---
 
