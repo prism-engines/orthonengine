@@ -194,8 +194,11 @@ def generate_manifest(
     """
     typology = pl.read_parquet(typology_path)
 
-    # Detect signal column
-    signal_col = 'signal_name' if 'signal_name' in typology.columns else 'signal_id'
+    # Use signal_id (canonical v2.0.0 schema)
+    # If old data has signal_name, rename it
+    if 'signal_name' in typology.columns and 'signal_id' not in typology.columns:
+        typology = typology.rename({'signal_name': 'signal_id'})
+    signal_col = 'signal_id'
 
     # Get unique signals (typology may have multiple rows per signal if per-unit)
     if 'unit_id' in typology.columns:
